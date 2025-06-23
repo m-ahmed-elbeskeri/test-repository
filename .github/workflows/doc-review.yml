@@ -182,35 +182,42 @@ jobs:
                                      action.action === 'create_page' ? 'Create' : 
                                      action.action === 'review_page' ? 'Review' : 'Modify';
                     
-                    comment += `**${actionVerb}: ${pageTitle}** ${action.estimated_time ? `(~${action.estimated_time})` : ''}\n\n`;
+                    comment += `## ${actionVerb}: ${pageTitle}\n\n`;
+                    if (action.estimated_time) {
+                      comment += `**Estimated Time:** ${action.estimated_time}\n\n`;
+                    }
                     
-                    // Basic info
-                    comment += `**Space:** ${action.space_key}\n\n`;
-                    comment += `**Reason:** ${action.reason}\n\n`;
+                    // Basic info in a clean table format
+                    comment += `| Field | Details |\n`;
+                    comment += `|-------|----------|\n`;
+                    comment += `| **Space** | ${action.space_key} |\n`;
+                    comment += `| **Reason** | ${action.reason} |\n`;
                     
                     if (action.change_category) {
-                      comment += `**Change Type:** ${action.change_category}\n\n`;
+                      comment += `| **Change Type** | ${action.change_category} |\n`;
                     }
                     
                     if (action.affected_audiences && action.affected_audiences.length > 0) {
-                      comment += `**Affects:** ${action.affected_audiences.join(', ')}\n\n`;
+                      comment += `| **Affects** | ${action.affected_audiences.join(', ')} |\n`;
                     }
                     
                     if (action.breaking_changes) {
-                      comment += `**⚠️ Breaking Changes:** Yes\n\n`;
+                      comment += `| **⚠️ Breaking Changes** | Yes |\n`;
                     }
                     
                     if (action.migration_required) {
-                      comment += `**📋 Migration Required:** Yes\n\n`;
+                      comment += `| **📋 Migration Required** | Yes |\n`;
                     }
+                    
+                    comment += '\n';
 
                     // FULL CONTENT APPROACH - NO TRUNCATION
                     if (action.action === 'create_page' && action.complete_content) {
                       // NEW PAGE - Complete Content
-                      comment += `**📄 Complete Page Content (Ready to paste):**\n\n`;
+                      comment += `### 📄 Complete Page Content (Ready to paste)\n\n`;
                       
                       if (action.complete_content.page_structure) {
-                        comment += `**Page Structure:**\n\n`;
+                        comment += `**Page Structure:**\n`;
                         action.complete_content.page_structure.forEach(section => {
                           comment += `- ${section}\n`;
                         });
@@ -226,16 +233,16 @@ jobs:
                       
                       if (action.complete_content.markdown_version) {
                         comment += `<details>\n<summary>📝 <strong>Markdown Version (for reference)</strong></summary>\n\n`;
-                        comment += `\`\`\`markdown\n${action.complete_content.markdown_version}\n\`\`\`\n\n`;
+                        comment += `\`\`\`markdown\n${action.complete_content.markdown_version}\n\`\`\`\n`;
                         comment += `</details>\n\n`;
                       }
                       
                     } else if (action.action === 'update_page' && action.contextual_updates) {
                       // EXISTING PAGE - Contextual Updates
-                      comment += `**🎯 Contextual Updates (Precise placement):**\n\n`;
+                      comment += `### 🎯 Contextual Updates (Precise placement)\n\n`;
                       
                       action.contextual_updates.forEach((update, idx) => {
-                        comment += `**Update ${idx + 1}: ${update.update_type}**\n\n`;
+                        comment += `**Update ${idx + 1}: ${update.update_type}**\n`;
                         comment += `- **Location:** ${update.position_description}\n`;
                         if (update.target_heading) {
                           comment += `- **Target:** ${update.target_heading}\n`;
@@ -249,18 +256,19 @@ jobs:
 
                     // Implementation notes
                     if (action.implementation_notes) {
-                      comment += `**Implementation Notes:** ${action.implementation_notes}\n\n`;
+                      comment += `### 📝 Implementation Notes\n\n`;
+                      comment += `${action.implementation_notes}\n\n`;
                     }
 
                     // Before/after examples
                     if (action.before_after_examples) {
-                      comment += `**Before/After Examples:**\n\n`;
+                      comment += `### 🔄 Before/After Examples\n\n`;
                       comment += `\`\`\`\n${action.before_after_examples}\n\`\`\`\n\n`;
                     }
 
                     // Validation checklist
                     if (action.validation_checklist && action.validation_checklist.length > 0) {
-                      comment += `**Validation Checklist:**\n\n`;
+                      comment += `### ✅ Validation Checklist\n\n`;
                       action.validation_checklist.forEach(item => {
                         comment += `- [ ] ${item}\n`;
                       });
@@ -274,9 +282,11 @@ jobs:
 
                     // Action links
                     if (action.action === 'update_page' && action.page_id) {
+                      comment += `### 🔗 Action Links\n\n`;
                       comment += `[📝 **Edit Page**](${confluenceUrl}/wiki/spaces/${action.space_key}/pages/${action.page_id}) | `;
                       comment += `[👁️ **View Page**](${confluenceUrl}/wiki/spaces/${action.space_key}/pages/${action.page_id})\n\n`;
                     } else if (action.action === 'create_page') {
+                      comment += `### 🔗 Action Links\n\n`;
                       comment += `[➕ **Create Page**](${confluenceUrl}/wiki/pages/createpage.action?spaceKey=${action.space_key}&title=${encodeURIComponent(pageTitle)})\n\n`;
                     }
                     
@@ -306,18 +316,13 @@ jobs:
               comment += '<details>\n';
               comment += '<summary>ℹ️ <strong>Analysis Details</strong></summary>\n\n';
               comment += `**Analysis powered by GPT-4o** | [View Workflow Run](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})\n\n`;
-              comment += '**Hybrid Documentation Approach:**\n';
-              comment += '- **New Pages:** Complete, ready-to-paste Confluence content\n';
-              comment += '- **Existing Updates:** Precise, contextual enhancements\n';
-              comment += '- **Quality Focus:** Professional, immediately actionable guidance\n\n';
               
               if (results.total_actions > 0) {
                 comment += '**Next Steps:**\n';
                 comment += '1. Review and prioritize the documentation actions above\n';
-                comment += '2. For new pages: Copy the complete content and paste into Confluence\n';
-                comment += '3. For updates: Follow the precise placement guidance\n';
-                comment += '4. Use validation checklists to ensure quality\n';
-                comment += '5. Cross-reference related pages for consistency\n\n';
+                comment += '2. Copy the complete content and paste into Confluence\n';
+                comment += '3. Use validation checklists to ensure quality\n';
+                comment += '4. Cross-reference related pages for consistency\n\n';
               }
               
               comment += '</details>';
