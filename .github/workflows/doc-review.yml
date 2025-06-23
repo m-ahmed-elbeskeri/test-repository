@@ -4,7 +4,7 @@ on:
     types: [opened, synchronize, reopened]
 
 jobs:
-  analyze-documentation:
+  generate-doc-prompt:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -16,21 +16,6 @@ jobs:
         with:
           fetch-depth: 0
           
-      - name: Get PR changes
-        id: pr-changes
-        run: |
-          # Get changed files
-          git diff --name-only origin/${{ github.base_ref }}...HEAD > changed_files.txt
-          echo "changed_files<<EOF" >> $GITHUB_OUTPUT
-          cat changed_files.txt >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          
-          # Get PR details
-          echo "pr_title=${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
-          echo "pr_body<<EOF" >> $GITHUB_OUTPUT
-          echo "${{ github.event.pull_request.body }}" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
@@ -38,12 +23,14 @@ jobs:
           
       - name: Install dependencies
         run: |
-          pip install openai requests pyyaml
+          pip install openai requests
 
-      - name: Analyze changes and generate outline
+      - name: Generate documentation prompt
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO_NAME: ${{ github.repository }}
-        run: python .github/scripts/analyze_pr.py
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python .github/scripts/generate_prompt.py
