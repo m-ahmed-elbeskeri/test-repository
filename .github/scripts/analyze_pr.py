@@ -3,7 +3,7 @@ import json
 import requests
 from typing import Optional, Dict, List
 from langchain_core.tools import tool
-from langchain_core.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI  # Fixed import
 from langchain.agents import initialize_agent, AgentType
 from atlassian import Confluence
 
