@@ -234,7 +234,7 @@ class EnhancedFileAnalyzer:
 # ============================================================================
 
 provider = OpenAIProvider(api_key=os.getenv('OPENAI_API_KEY'))
-model = OpenAIModel('gpt-4o', provider=provider)
+model = OpenAIModel('gpt-4.1', provider=provider)
 
 confluence_agent = Agent[AnalysisDependencies, ConfluenceAnalysisResult](
     model,
