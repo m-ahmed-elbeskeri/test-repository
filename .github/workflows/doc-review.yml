@@ -47,7 +47,7 @@ jobs:
             confluence_actions.json
           retention-days: 5
 
-      - name: Comment on PR with results
+      - name: Comment on PR with hybrid results
         if: success()
         uses: actions/github-script@v7
         env:
@@ -81,6 +81,7 @@ jobs:
               
               // Executive Summary
               comment += '### 📊 Executive Summary\n\n';
+              comment += `> **Strategy:** ${results.content_strategy || 'Hybrid approach analysis'}\n`;
               comment += `> **Impact:** ${results.summary || 'Analysis completed'}\n`;
               comment += `> **Total Actions:** ${results.total_actions || 0}\n`;
               comment += `> **Estimated Effort:** ${results.estimated_total_effort || 'Unknown'}\n`;
@@ -109,7 +110,7 @@ jobs:
               if (results.confluence_actions && results.confluence_actions.length > 0) {
                 comment += '### 📝 Documentation Actions Required\n\n';
 
-                // Group by priority (including the new 'critical' priority)
+                // Group by priority
                 const priorities = {
                   Critical: results.confluence_actions.filter(a => a.priority === 'critical'),
                   High: results.confluence_actions.filter(a => a.priority === 'high'),
@@ -160,31 +161,59 @@ jobs:
                     
                     comment += '\n';
 
-                    // Content sections
-                    if (action.content_sections && action.content_sections.length > 0) {
-                      comment += `**Sections to Update:**\n`;
-                      action.content_sections.forEach(section => {
-                        const changeIcon = section.change_type === 'add' ? '➕' : 
-                                          section.change_type === 'update' ? '✏️' : 
-                                          section.change_type === 'remove' ? '❌' : '🔄';
-                        comment += `- ${changeIcon} **${section.section_name}**: ${section.required_changes}\n`;
-                        
-                        if (section.example_content && section.example_content.length < 200) {
-                          comment += `  \`\`\`\n  ${section.example_content}\n  \`\`\`\n`;
-                        }
-                      });
+                    // HYBRID CONTENT APPROACH
+                    if (action.action === 'create_page' && action.complete_content) {
+                      // NEW PAGE - Complete Content
+                      comment += `**📄 Complete Page Content** (Ready to paste):\n\n`;
+                      comment += `**Page Structure:**\n`;
+                      if (action.complete_content.page_structure) {
+                        action.complete_content.page_structure.forEach(section => {
+                          comment += `- ${section}\n`;
+                        });
+                      }
                       comment += '\n';
-                    }
-
-                    // Before/after examples
-                    if (action.before_after_examples) {
-                      comment += `**Examples:**\n`;
-                      comment += `\`\`\`\n${action.before_after_examples}\n\`\`\`\n\n`;
+                      
+                      comment += `**Confluence Markup:**\n`;
+                      comment += `\`\`\`xml\n${action.complete_content.confluence_markup.substring(0, 1500)}${action.complete_content.confluence_markup.length > 1500 ? '\n... (content truncated)' : ''}\n\`\`\`\n\n`;
+                      
+                      if (action.complete_content.estimated_read_time) {
+                        comment += `**Estimated Read Time:** ${action.complete_content.estimated_read_time}\n\n`;
+                      }
+                      
+                    } else if (action.action === 'update_page' && action.contextual_updates) {
+                      // EXISTING PAGE - Contextual Updates
+                      comment += `**🎯 Contextual Updates** (Precise placement):\n\n`;
+                      
+                      action.contextual_updates.forEach((update, idx) => {
+                        comment += `**Update ${idx + 1}: ${update.update_type}**\n`;
+                        comment += `- **Location:** ${update.position_description}\n`;
+                        if (update.target_heading) {
+                          comment += `- **Target:** ${update.target_heading}\n`;
+                        }
+                        comment += `- **Action:** ${update.location_type}\n`;
+                        comment += `- **Preview:** ${update.content_preview}...\n`;
+                        comment += `\`\`\`xml\n${update.content_to_add.substring(0, 800)}${update.content_to_add.length > 800 ? '\n... (content truncated)' : ''}\n\`\`\`\n\n`;
+                      });
                     }
 
                     // Implementation notes
                     if (action.implementation_notes) {
                       comment += `**Implementation Notes:** ${action.implementation_notes}\n\n`;
+                    }
+
+                    // Before/after examples
+                    if (action.before_after_examples) {
+                      comment += `**Before/After Examples:**\n`;
+                      comment += `\`\`\`\n${action.before_after_examples}\n\`\`\`\n\n`;
+                    }
+
+                    // Validation checklist
+                    if (action.validation_checklist && action.validation_checklist.length > 0) {
+                      comment += `**Validation Checklist:**\n`;
+                      action.validation_checklist.forEach(item => {
+                        comment += `- [ ] ${item}\n`;
+                      });
+                      comment += '\n';
                     }
 
                     // Related pages
@@ -226,14 +255,18 @@ jobs:
               comment += '<details>\n';
               comment += '<summary>ℹ️ <strong>Analysis Details</strong></summary>\n\n';
               comment += `**Analysis powered by GPT-4o** | [View Workflow Run](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})\n\n`;
-              comment += '**Documentation Philosophy:** Great documentation prevents support tickets, reduces onboarding time, and enables users to succeed independently. Each recommendation focuses on creating content that truly serves user needs and business objectives.\n\n';
+              comment += '**Hybrid Documentation Approach:**\n';
+              comment += '- **New Pages:** Complete, ready-to-paste Confluence content\n';
+              comment += '- **Existing Updates:** Precise, contextual enhancements\n';
+              comment += '- **Quality Focus:** Professional, immediately actionable guidance\n\n';
               
               if (results.total_actions > 0) {
                 comment += '**Next Steps:**\n';
                 comment += '1. Review and prioritize the documentation actions above\n';
-                comment += '2. Assign team members to handle critical and high-priority updates\n';
-                comment += '3. Update documentation before or immediately after merging this PR\n';
-                comment += '4. Validate that users can successfully follow the updated documentation\n\n';
+                comment += '2. For new pages: Copy the complete content and paste into Confluence\n';
+                comment += '3. For updates: Follow the precise placement guidance\n';
+                comment += '4. Use validation checklists to ensure quality\n';
+                comment += '5. Cross-reference related pages for consistency\n\n';
               }
               
               comment += '</details>';
