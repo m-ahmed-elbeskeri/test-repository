@@ -20,16 +20,10 @@ jobs:
         with:
           python-version: '3.11'
 
-      # <--- FIX: Install all dependencies from the new requirements.txt file
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r .github/scripts/requirements.txt
-
-      # <--- IMPROVEMENT: This step is redundant and has been removed.
-      # The checkout step already creates the necessary directory structure.
-      # - name: Create scripts directory
-      #   run: mkdir -p .github/scripts
 
       - name: Analyze PR with Confluence tools
         env:
@@ -49,107 +43,258 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: confluence-analysis-results
-          # <--- FIX: Only upload files that are actually created by the script.
           path: |
             confluence_actions.json
-            logfire.log
-          retention-days: 5 # 30 days is long for temporary artifacts
+          retention-days: 5
 
       - name: Comment on PR with results
         if: success()
         uses: actions/github-script@v7
-        # <--- FIX: Pass the CONFLUENCE_URL to the script context so it can build correct links.
         env:
           CONFLUENCE_URL: ${{ secrets.CONFLUENCE_URL }}
         with:
           script: |
             const fs = require('fs');
-            let comment = '## 📋 AI Documentation Review\n\n';
-
-            try {
-              if (fs.existsSync('confluence_actions.json')) {
-                const results = JSON.parse(fs.readFileSync('confluence_actions.json', 'utf8'));
-
-                comment += `> **Summary:** ${results.summary || 'Analysis completed'}\n`;
-                comment += `> **Actions Required:** ${results.total_actions || 0}\n`;
-                comment += `> **Estimated Effort:** ${results.estimated_effort || 'Unknown'}\n`;
-                comment += `> **Spaces Affected:** ${results.spaces_affected?.join(', ') || 'N/A'}\n\n`;
-
-                if (results.confluence_actions && results.confluence_actions.length > 0) {
-                  comment += '### Documentation Actions Required\n\n';
-
-                  const priorities = {
-                    High: results.confluence_actions.filter(a => a.priority === 'high'),
-                    Medium: results.confluence_actions.filter(a => a.priority === 'medium'),
-                    Low: results.confluence_actions.filter(a => a.priority === 'low'),
-                  };
-
-                  const processActions = (actions, label) => {
-                    if (actions.length > 0) {
-                      comment += `#### ${label} Priority\n\n`;
-                      actions.forEach(action => {
-                        const pageTitle = action.page_title || action.new_page_title;
-                        const confluenceUrl = process.env.CONFLUENCE_URL; // Now available from the env block
-
-                        comment += `**${action.action === 'update_page' ? 'Update' : 'Create'}: ${pageTitle}**\n`;
-                        comment += `- **Space:** ${action.space_key}\n`;
-                        comment += `- **Reason:** ${action.reason}\n`;
-                        comment += `- **Changes:**\n\`\`\`\n${action.specific_changes}\n\`\`\`\n`;
-
-                        if (action.action === 'update_page' && action.page_id) {
-                           comment += `- [**View Page**](${confluenceUrl}/wiki/spaces/${action.space_key}/pages/${action.page_id})\n`;
-                        } else if (action.action === 'create_page') {
-                          comment += `- [**Create Page**](${confluenceUrl}/wiki/pages/createpage.action?spaceKey=${action.space_key}&title=${encodeURIComponent(pageTitle)})\n`;
-                        }
-                        comment += '\n';
-                      });
-                    }
-                  };
-
-                  processActions(priorities.High, 'High');
-                  processActions(priorities.Medium, 'Medium');
-                  processActions(priorities.Low, 'Low');
-
-                } else {
-                  comment += '✅ No documentation updates required for this PR.\n\n';
-                }
-
-              } else {
-                comment += '⚠️ No structured analysis results were found. Please check the workflow logs for details.\n\n';
-              }
-
-            } catch (error) {
-              comment += `❌ An error occurred while formatting the analysis results: ${error.message}\n\n`;
+            
+            if (!fs.existsSync('confluence_actions.json')) {
+              const comment = `## 📋 AI Documentation Review
+              
+              ⚠️ No structured analysis results were found. Please check the [workflow logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.
+              
+              ---
+              *Analysis powered by GPT-4o*`;
+              
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+              return;
             }
 
-            comment += '---\n';
-            
-            comment += `*Analysis powered by GPT-4o. [View Workflow Run](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})*`;
-            comment += `Remember: Great documentation prevents support tickets, reduces onboarding time, and enables users to succeed independently. Focus on creating content that truly serves the user's needs and business objectives.\n\n';
+            try {
+              const results = JSON.parse(fs.readFileSync('confluence_actions.json', 'utf8'));
+              const confluenceUrl = process.env.CONFLUENCE_URL;
+              
+              let comment = '## 📋 AI Documentation Review\n\n';
+              
+              // Executive Summary
+              comment += '### 📊 Executive Summary\n\n';
+              comment += `> **Impact:** ${results.summary || 'Analysis completed'}\n`;
+              comment += `> **Total Actions:** ${results.total_actions || 0}\n`;
+              comment += `> **Estimated Effort:** ${results.estimated_total_effort || 'Unknown'}\n`;
+              comment += `> **Spaces Affected:** ${results.spaces_affected?.join(', ') || 'N/A'}\n`;
+              
+              if (results.change_categories && results.change_categories.length > 0) {
+                comment += `> **Change Categories:** ${results.change_categories.join(', ')}\n`;
+              }
+              
+              if (results.user_impact_summary) {
+                comment += `> **User Impact:** ${results.user_impact_summary}\n`;
+              }
+              
+              comment += '\n';
 
+              // Critical Updates Section
+              if (results.critical_updates && results.critical_updates.length > 0) {
+                comment += '### 🚨 Critical Updates Required\n\n';
+                results.critical_updates.forEach(update => {
+                  comment += `- ⚠️ ${update}\n`;
+                });
+                comment += '\n';
+              }
 
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
+              // Documentation Actions
+              if (results.confluence_actions && results.confluence_actions.length > 0) {
+                comment += '### 📝 Documentation Actions Required\n\n';
+
+                // Group by priority (including the new 'critical' priority)
+                const priorities = {
+                  Critical: results.confluence_actions.filter(a => a.priority === 'critical'),
+                  High: results.confluence_actions.filter(a => a.priority === 'high'),
+                  Medium: results.confluence_actions.filter(a => a.priority === 'medium'),
+                  Low: results.confluence_actions.filter(a => a.priority === 'low')
+                };
+
+                const priorityEmojis = {
+                  Critical: '🚨',
+                  High: '🔴',
+                  Medium: '🟡', 
+                  Low: '🟢'
+                };
+
+                const processActions = (actions, label) => {
+                  if (actions.length === 0) return;
+                  
+                  comment += `#### ${priorityEmojis[label]} ${label} Priority (${actions.length} action${actions.length > 1 ? 's' : ''})\n\n`;
+                  
+                  actions.forEach((action, index) => {
+                    const pageTitle = action.page_title;
+                    const actionVerb = action.action === 'update_page' ? 'Update' : 
+                                     action.action === 'create_page' ? 'Create' : 
+                                     action.action === 'review_page' ? 'Review' : 'Modify';
+                    
+                    comment += `<details>\n`;
+                    comment += `<summary><strong>${actionVerb}: ${pageTitle}</strong> ${action.estimated_time ? `(~${action.estimated_time})` : ''}</summary>\n\n`;
+                    
+                    // Basic info
+                    comment += `**Space:** ${action.space_key}\n`;
+                    comment += `**Reason:** ${action.reason}\n`;
+                    
+                    if (action.change_category) {
+                      comment += `**Change Type:** ${action.change_category}\n`;
+                    }
+                    
+                    if (action.affected_audiences && action.affected_audiences.length > 0) {
+                      comment += `**Affects:** ${action.affected_audiences.join(', ')}\n`;
+                    }
+                    
+                    if (action.breaking_changes) {
+                      comment += `**⚠️ Breaking Changes:** Yes\n`;
+                    }
+                    
+                    if (action.migration_required) {
+                      comment += `**📋 Migration Required:** Yes\n`;
+                    }
+                    
+                    comment += '\n';
+
+                    // Content sections
+                    if (action.content_sections && action.content_sections.length > 0) {
+                      comment += `**Sections to Update:**\n`;
+                      action.content_sections.forEach(section => {
+                        const changeIcon = section.change_type === 'add' ? '➕' : 
+                                          section.change_type === 'update' ? '✏️' : 
+                                          section.change_type === 'remove' ? '❌' : '🔄';
+                        comment += `- ${changeIcon} **${section.section_name}**: ${section.required_changes}\n`;
+                        
+                        if (section.example_content && section.example_content.length < 200) {
+                          comment += `  \`\`\`\n  ${section.example_content}\n  \`\`\`\n`;
+                        }
+                      });
+                      comment += '\n';
+                    }
+
+                    // Before/after examples
+                    if (action.before_after_examples) {
+                      comment += `**Examples:**\n`;
+                      comment += `\`\`\`\n${action.before_after_examples}\n\`\`\`\n\n`;
+                    }
+
+                    // Implementation notes
+                    if (action.implementation_notes) {
+                      comment += `**Implementation Notes:** ${action.implementation_notes}\n\n`;
+                    }
+
+                    // Related pages
+                    if (action.related_pages && action.related_pages.length > 0) {
+                      comment += `**Related Pages:** ${action.related_pages.join(', ')}\n\n`;
+                    }
+
+                    // Action links
+                    if (action.action === 'update_page' && action.page_id) {
+                      comment += `[📝 **Edit Page**](${confluenceUrl}/wiki/spaces/${action.space_key}/pages/${action.page_id}) | `;
+                      comment += `[👁️ **View Page**](${confluenceUrl}/wiki/spaces/${action.space_key}/pages/${action.page_id})\n`;
+                    } else if (action.action === 'create_page') {
+                      comment += `[➕ **Create Page**](${confluenceUrl}/wiki/pages/createpage.action?spaceKey=${action.space_key}&title=${encodeURIComponent(pageTitle)})\n`;
+                    }
+                    
+                    comment += `</details>\n\n`;
+                  });
+                };
+
+                // Process each priority level
+                processActions(priorities.Critical, 'Critical');
+                processActions(priorities.High, 'High');
+                processActions(priorities.Medium, 'Medium');
+                processActions(priorities.Low, 'Low');
+
+              } else {
+                comment += '### ✅ No Documentation Updates Required\n\n';
+                comment += 'This PR does not appear to require any documentation changes.\n\n';
+              }
+
+              // Rollout recommendations
+              if (results.rollout_recommendations) {
+                comment += '### 🚀 Rollout Recommendations\n\n';
+                comment += `${results.rollout_recommendations}\n\n`;
+              }
+
+              // Footer
+              comment += '---\n\n';
+              comment += '<details>\n';
+              comment += '<summary>ℹ️ <strong>Analysis Details</strong></summary>\n\n';
+              comment += `**Analysis powered by GPT-4o** | [View Workflow Run](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})\n\n`;
+              comment += '**Documentation Philosophy:** Great documentation prevents support tickets, reduces onboarding time, and enables users to succeed independently. Each recommendation focuses on creating content that truly serves user needs and business objectives.\n\n';
+              
+              if (results.total_actions > 0) {
+                comment += '**Next Steps:**\n';
+                comment += '1. Review and prioritize the documentation actions above\n';
+                comment += '2. Assign team members to handle critical and high-priority updates\n';
+                comment += '3. Update documentation before or immediately after merging this PR\n';
+                comment += '4. Validate that users can successfully follow the updated documentation\n\n';
+              }
+              
+              comment += '</details>';
+
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+
+            } catch (error) {
+              const errorComment = `## 📋 AI Documentation Review
+              
+              ❌ **Error formatting analysis results:** ${error.message}
+              
+              Please check the [workflow logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.
+              
+              ---
+              *Analysis powered by GPT-4o*`;
+
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: errorComment
+              });
+            }
 
       - name: Handle workflow failures
         if: failure()
         uses: actions/github-script@v7
         with:
           script: |
-            const comment = `## ❌ Documentation Analysis Failed
+            const comment = `## 📋 AI Documentation Review
+            
+            ❌ **Documentation Analysis Failed**
 
             The automated documentation review encountered an error and could not complete.
 
-            **Troubleshooting Steps:**
-            1.  **Check the [Workflow Logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})** for the detailed error message.
-            2.  Verify that all required repository secrets are configured correctly (\`OPENAI_API_KEY\`, \`CONFLUENCE_URL\`, etc.).
-            3.  Ensure the Confluence and OpenAI API credentials are valid and have the necessary permissions.`;
+            ### 🔧 Troubleshooting Steps
+            1. **Check the [Workflow Logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})** for detailed error messages
+            2. Verify that all required repository secrets are configured correctly:
+               - \`OPENAI_API_KEY\`
+               - \`CONFLUENCE_URL\` 
+               - \`CONFLUENCE_USERNAME\`
+               - \`CONFLUENCE_API_TOKEN\`
+               - \`GITHUB_TOKEN\` (should be automatic)
+            3. Ensure the Confluence and OpenAI API credentials are valid and have necessary permissions
+            4. Check if the repository has the required \`.github/scripts/requirements.txt\` file
 
-            github.rest.issues.createComment({
+            ### 🆘 Need Help?
+            If the issue persists, please:
+            - Review the workflow configuration
+            - Test API connections manually
+            - Contact your DevOps team for assistance
+
+            ---
+            *Analysis powered by GPT-4o*`;
+
+            await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
