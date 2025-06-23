@@ -3,8 +3,8 @@ import json
 import requests
 from typing import Optional, Dict, List
 from langchain_core.tools import tool
-from langchain_openai import ChatOpenAI  # Fixed import
-from langchain.agents import initialize_agent, AgentType
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 from atlassian import Confluence
 
 # ============================================================================
@@ -149,17 +149,15 @@ class PRConfluenceAnalyzer:
     def __init__(self):
         global confluence_toolkit
         
-        # Initialize LLM with OpenRouter
+        # Initialize LLM with OpenRouter (fixed headers)
         self.llm = ChatOpenAI(
             model=os.getenv('OPENROUTER_MODEL', 'anthropic/claude-3.5-sonnet'),
             temperature=0.1,
             openai_api_key=os.getenv('OPENROUTER_API_KEY'),
             openai_api_base="https://openrouter.ai/api/v1",
-            model_kwargs={
-                "headers": {
-                    "HTTP-Referer": "https://github.com",
-                    "X-Title": "GitHub Documentation Bot"
-                }
+            default_headers={
+                "HTTP-Referer": "https://github.com",
+                "X-Title": "GitHub Documentation Bot"
             }
         )
         
@@ -170,7 +168,7 @@ class PRConfluenceAnalyzer:
             api_token=os.getenv('CONFLUENCE_API_TOKEN')
         )
         
-        # Tools list - these are now properly decorated functions
+        # Tools list
         self.tools = [
             get_confluence_spaces,
             search_confluence_using_cql,
@@ -178,15 +176,8 @@ class PRConfluenceAnalyzer:
             get_pages_in_confluence_space
         ]
         
-        # Initialize agent
-        self.agent = initialize_agent(
-            self.tools,
-            self.llm,
-            agent=AgentType.OPENAI_FUNCTIONS,
-            verbose=True,
-            max_iterations=8,
-            handle_parsing_errors=True
-        )
+        # Bind tools to model
+        self.llm_with_tools = self.llm.bind_tools(self.tools)
         
         # PR details
         self.pr_number = os.getenv('PR_NUMBER')
@@ -254,7 +245,7 @@ class PRConfluenceAnalyzer:
         return analysis
     
     def run_confluence_analysis(self):
-        """Run the main Confluence analysis using the LangChain agent"""
+        """Run the main Confluence analysis using modern LangChain approach"""
         
         # Get PR changes
         files = self.get_pr_changes()
@@ -300,25 +291,16 @@ class PRConfluenceAnalyzer:
                     "page_id": "123456",
                     "space_key": "DEV", 
                     "page_title": "API Reference",
-                    "reason": "New authentication endpoints added in auth/login.py",
+                    "reason": "New authentication endpoints added",
                     "priority": "high",
-                    "specific_changes": "Add documentation for POST /auth/login and PUT /auth/refresh endpoints",
+                    "specific_changes": "Add documentation for new endpoints",
                     "existing_content_summary": "Brief summary of current page content"
-                }},
-                {{
-                    "action": "create_page",
-                    "space_key": "DEV",
-                    "parent_page_id": "789012", 
-                    "new_page_title": "User Authentication Guide",
-                    "reason": "New auth system requires user guide",
-                    "priority": "medium",
-                    "content_outline": "Introduction, Setup, Usage Examples, Troubleshooting"
                 }}
             ],
             "summary": "Brief summary of documentation impact and rationale",
-            "total_actions": 2,
+            "total_actions": 1,
             "estimated_effort": "Medium",
-            "spaces_affected": ["DEV", "PROD"]
+            "spaces_affected": ["DEV"]
         }}
         ```
 
@@ -326,10 +308,46 @@ class PRConfluenceAnalyzer:
         """
         
         try:
-            print("🤖 Starting LangChain agent analysis with OpenRouter...")
-            result = self.agent.run(analysis_prompt)
-            return result
+            print("🤖 Starting modern LangChain analysis with OpenRouter...")
+            
+            # Use the modern invoke approach
+            messages = [HumanMessage(content=analysis_prompt)]
+            response = self.llm_with_tools.invoke(messages)
+            
+            # Handle tool calls if any
+            if hasattr(response, 'tool_calls') and response.tool_calls:
+                print(f"🔧 Model requested {len(response.tool_calls)} tool calls")
+                
+                # Execute tool calls
+                for tool_call in response.tool_calls:
+                    tool_name = tool_call['name']
+                    tool_args = tool_call['args']
+                    
+                    print(f"🛠️ Executing {tool_name} with args: {tool_args}")
+                    
+                    # Find and execute the tool
+                    for tool in self.tools:
+                        if tool.name == tool_name:
+                            try:
+                                if tool_args:
+                                    result = tool.invoke(tool_args)
+                                else:
+                                    result = tool.invoke({})
+                                print(f"✅ Tool {tool_name} executed successfully")
+                                break
+                            except Exception as e:
+                                print(f"❌ Tool {tool_name} failed: {e}")
+                
+                # Get final response after tool execution
+                final_messages = messages + [response]
+                final_response = self.llm.invoke(final_messages)
+                return final_response.content
+            else:
+                # No tool calls, return direct response
+                return response.content
+                
         except Exception as e:
+            print(f"❌ Error during analysis: {e}")
             return f"❌ Error during LangChain analysis: {str(e)}"
 
 # ============================================================================
