@@ -1,1 +1,69 @@
-reeee
+
+from fastapi import FastAPI, Request
+import json
+from database import Database
+from confluence_client import ConfluenceClient
+
+app = FastAPI()
+db = Database()
+confluence = ConfluenceClient()
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "ok", "service": "confluence-sync"}
+
+@app.post("/slack/interactions")
+async def handle_slack_interaction(request: Request):
+    """Handle Slack button interactions"""
+    form_data = await request.form()
+    payload = json.loads(form_data["payload"])
+
+    action = payload["actions"][0]
+    action_id = action["action_id"]
+    value = action["value"]
+    user = payload["user"]["name"]
+
+    if action_id in ["approve_update", "reject_update"]:
+        action_type, request_id = value.split("_", 1)
+
+        # Update request status
+        await db.update_request_status(request_id, action_type + "d")
+
+        if action_type == "approve":
+            # Apply the updates to Confluence
+            await apply_confluence_updates(request_id, user)
+
+            # Update the Slack message
+            await update_slack_message(payload, f"✅ Updates approved and applied by {user}")
+        else:
+            await update_slack_message(payload, f"❌ Updates rejected by {user}")
+
+    elif action_id == "preview_changes":
+        request_id = value.split("_", 1)[1]
+        await send_preview_message(request_id, payload["response_url"])
+
+    return {"status": "ok"}
+
+async def apply_confluence_updates(request_id: str, user: str):
+    """Apply approved updates to Confluence"""
+    suggestion_request = await db.get_suggestion_request(request_id)
+
+    if not suggestion_request:
+        return
+
+    for suggestion in suggestion_request['suggestions']:
+        page = suggestion['page']
+        suggested_content = suggestion['suggested_content']
+
+        # Apply the content changes (simplified)
+        success = await confluence.update_page_content(
+            page['id'],
+            suggested_content.get('full_content', ''),  # You'd need to generate this
+            page['version']['number']
+        )
+
+        if success:
+            await db.log_confluence_update(
+                request_id, page['id'], page['title'], user
+            )
