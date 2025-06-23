@@ -65,81 +65,69 @@ jobs:
               if (fs.existsSync('confluence_actions.json')) {
                 const results = JSON.parse(fs.readFileSync('confluence_actions.json', 'utf8'));
 
-                comment += `> **🎯 Quick Summary:** ${results.summary || 'Analysis completed'}\n`;
-                comment += `> **📊 Actions Required:** ${results.total_actions || 0} | **⏱️ Estimated Effort:** ${results.estimated_effort || 'Unknown'} | **📁 Spaces:** ${results.spaces_affected?.join(', ') || 'N/A'}\n\n`;
+                comment += `> Summary: ${results.summary || 'Analysis completed'}\n`;
+                comment += `> Actions Required: ${results.total_actions || 0}\n`;
+                comment += `> Estimated Effort: ${results.estimated_effort || 'Unknown'}\n`;
+                comment += `> Spaces Affected: ${results.spaces_affected?.join(', ') || 'N/A'}\n\n`;
 
                 if (results.confluence_actions && results.confluence_actions.length > 0) {
-                  comment += '### 📝 Documentation Actions Required:\n\n';
+                  comment += '### Documentation Actions Required\n\n';
 
-                  const highPriority = results.confluence_actions.filter(a => a.priority === 'high');
-                  const mediumPriority = results.confluence_actions.filter(a => a.priority === 'medium');
-                  const lowPriority = results.confluence_actions.filter(a => a.priority === 'low');
+                  const priorities = {
+                    High: results.confluence_actions.filter(a => a.priority === 'high'),
+                    Medium: results.confluence_actions.filter(a => a.priority === 'medium'),
+                    Low: results.confluence_actions.filter(a => a.priority === 'low'),
+                  };
 
-                  const processActions = (actions, priorityLabel, emoji) => {
+                  const processActions = (actions, label) => {
                     if (actions.length > 0) {
-                      comment += `#### ${emoji} ${priorityLabel} Priority\n\n`;
+                      comment += `#### ${label} Priority\n\n`;
                       actions.forEach(action => {
-                        const actionType = action.action === 'update_page' ? '📝 Update' : '✨ Create';
                         const pageTitle = action.page_title || action.new_page_title;
                         const confluenceUrl = process.env.CONFLUENCE_URL || 'https://your-domain.atlassian.net';
 
-                        comment += `**${actionType}: ${pageTitle}**\n`;
-                        comment += `- **Space:** ${action.space_key}\n`;
-                        comment += `- **Reason:** ${action.reason}\n`;
-                        comment += `- **Changes:** ${action.specific_changes}\n`;
+                        comment += `**${action.action === 'update_page' ? 'Update' : 'Create'}: ${pageTitle}**\n`;
+                        comment += `- Space: ${action.space_key}\n`;
+                        comment += `- Reason: ${action.reason}\n`;
+                        comment += `- Changes:\n\`\`\`\n${action.specific_changes}\n\`\`\`\n`;
 
                         if (action.action === 'update_page' && action.page_id) {
-                          comment += `- **🔗 [Edit Page](${confluenceUrl}/pages/resumedraft.action?draftId=${action.page_id})** | `;
-                          comment += `**[View Page](${confluenceUrl}/spaces/${action.space_key}/pages/${action.page_id})**\n`;
+                          comment += `- [Edit Page](${confluenceUrl}/pages/resumedraft.action?draftId=${action.page_id}) | [View Page](${confluenceUrl}/spaces/${action.space_key}/pages/${action.page_id})\n`;
                         } else if (action.action === 'create_page') {
-                          comment += `- **🔗 [Create Page](${confluenceUrl}/spaces/${action.space_key}/pages/create)** in ${action.space_key} space\n`;
+                          comment += `- [Create Page](${confluenceUrl}/pages/createpage.action?spaceKey=${action.space_key}&title=${encodeURIComponent(pageTitle)})\n`;
                         }
+
                         comment += '\n';
                       });
                     }
                   };
 
-                  processActions(highPriority, 'High', '🔴');
-                  processActions(mediumPriority, 'Medium', '🟡');
-                  processActions(lowPriority, 'Low', '🟢');
+                  processActions(priorities.High, 'High');
+                  processActions(priorities.Medium, 'Medium');
+                  processActions(priorities.Low, 'Low');
+
+                  comment += '### Implementation Checklist\n\n';
+                  results.confluence_actions.forEach(action => {
+                    comment += `- [ ] ${action.action === 'update_page' ? 'Update' : 'Create'}: ${action.page_title || action.new_page_title} (${action.space_key})\n`;
+                  });
 
                 } else {
-                  comment += '✅ **No documentation updates required for this PR!**\n\n';
-                  comment += '🎉 Your changes don\'t appear to affect user-facing documentation.\n\n';
-                }
-
-                comment += '### 🎯 Quick Actions:\n\n';
-                comment += '| Action | Description | Link |\n';
-                comment += '|--------|-------------|------|\n';
-                comment += '| ✅ | Approve all documentation updates | React with ✅ |\n';
-                comment += '| ❌ | Skip documentation updates | React with ❌ |\n';
-                comment += '| 🔄 | Request more detailed analysis | React with 🔄 |\n';
-                comment += '| 📝 | Create documentation task | [Create Jira Ticket](https://your-domain.atlassian.net/secure/CreateIssue.jspa) |\n';
-                comment += '| 🔗 | Bulk update documentation | [Open Confluence](https://your-domain.atlassian.net/wiki) |\n\n';
-
-                if (results.confluence_actions && results.confluence_actions.length > 0) {
-                  comment += '### ✅ Implementation Checklist:\n\n';
-                  results.confluence_actions.forEach(action => {
-                    comment += `- [ ] ${action.action === 'update_page' ? 'Update' : 'Create'}: **${action.page_title || action.new_page_title}** in ${action.space_key}\n`;
-                  });
-                  comment += '\n';
+                  comment += '✅ No documentation updates required for this PR.\n\n';
                 }
 
               } else {
-                comment += '⚠️ Analysis completed but no structured results found.\n';
-                comment += 'Check the workflow logs for details.\n\n';
+                comment += '⚠️ No structured results found. Check workflow logs for details.\n\n';
               }
 
             } catch (error) {
-              comment += `❌ Error reading analysis results: ${error.message}\n`;
-              comment += 'Check the workflow artifacts for raw results.\n\n';
+              comment += `❌ Error reading analysis results: ${error.message}\n\n`;
             }
 
             comment += '---\n';
-            comment += `📁 **[View Full Analysis](${context.payload.repository.html_url}/actions/runs/${context.runId})** | `;
-            comment += `🔧 **[Workflow Configuration](${context.payload.repository.html_url}/blob/main/.github/workflows/documentation-review.yml)** | `;
-            comment += `📚 **[Documentation Guidelines](https://your-domain.atlassian.net/wiki/spaces/ENG/pages/123456/Documentation+Guidelines)**\n\n`;
-            comment += `*🤖 Analysis powered by Claude 4 via OpenRouter • Generated in workflow run ${context.runId}*`;
+            comment += `📁 [View Workflow Logs](${context.payload.repository.html_url}/actions/runs/${context.runId})  \n`;
+            comment += `🛠️ [Workflow Config](${context.payload.repository.html_url}/blob/main/.github/workflows/documentation-review.yml)  \n`;
+            comment += `📚 [Documentation Guidelines](https://your-domain.atlassian.net/wiki/spaces/ENG/pages/123456/Documentation+Guidelines)\n\n`;
+            comment += `*Generated by Claude via OpenRouter – Run ID: ${context.runId}*`;
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -158,17 +146,15 @@ jobs:
             The automated documentation review encountered an error.
 
             **Troubleshooting:**
-            - Check the [workflow logs](${context.payload.repository.html_url}/actions/runs/${context.runId}) for details
+            - Check the [workflow logs](${context.payload.repository.html_url}/actions/runs/${context.runId})
             - Verify that all required secrets are configured
             - Ensure Confluence credentials are valid
 
-            **Required Secrets:**
-            - \`OPENROUTER_API_KEY\`
-            - \`CONFLUENCE_URL\`
-            - \`CONFLUENCE_USERNAME\`
-            - \`CONFLUENCE_API_TOKEN\`
-
-            Please review the configuration and re-run the workflow.`;
+            Required Secrets:
+            - OPENROUTER_API_KEY
+            - CONFLUENCE_URL
+            - CONFLUENCE_USERNAME
+            - CONFLUENCE_API_TOKEN`;
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,
