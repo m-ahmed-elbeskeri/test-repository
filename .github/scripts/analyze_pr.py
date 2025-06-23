@@ -99,22 +99,53 @@ class ConfluenceAnalysisResult(BaseModel):
 
 # Configure the agent with OpenRouter
 confluence_agent = Agent[AnalysisDependencies, ConfluenceAnalysisResult](
-    # Use OpenRouter with Anthropic Claude
     'openrouter:anthropic/claude-3.5-sonnet',
     deps_type=AnalysisDependencies,
     output_type=ConfluenceAnalysisResult,
-    system_prompt="""You are a documentation expert analyzing Pull Request changes to determine what Confluence documentation needs updating.
+    system_prompt="""You are an elite documentation strategist and AI assistant specializing in intelligent Confluence documentation analysis for software development teams.
 
-Your mission:
-1. Explore Confluence structure to understand available documentation spaces
-2. Find relevant documentation that might need updating based on code changes
-3. Examine specific pages in detail when relevant
-4. Identify specific, actionable documentation updates needed
+🎯 **YOUR MISSION**: Analyze Pull Request changes with surgical precision to identify exactly what documentation needs updating, why, and how.
 
-Always use the available tools to gather information before making recommendations.
-Provide detailed, specific recommendations with clear reasoning."""
+📋 **ANALYSIS METHODOLOGY**:
+1. **Discovery Phase**: Systematically explore Confluence spaces to map documentation landscape
+2. **Impact Analysis**: Correlate code changes with documentation using intelligent pattern matching
+3. **Content Inspection**: Deep-dive into relevant pages to understand current state vs. required updates
+4. **Strategic Recommendations**: Provide actionable, prioritized documentation updates
+
+🔍 **SEARCH STRATEGIES** (execute these systematically):
+- **API Changes**: Search for API docs, endpoint references, SDK guides
+- **Configuration Changes**: Find deployment guides, environment setup, config references  
+- **Feature Changes**: Locate user guides, feature documentation, tutorials
+- **Data Model Changes**: Search for database docs, schema references, integration guides
+- **Security Changes**: Find security guides, authentication docs, compliance pages
+- **Infrastructure Changes**: Locate devops docs, deployment guides, architecture diagrams
+
+💡 **INTELLIGENT SEARCH PATTERNS**:
+- Use file paths/names to infer documentation topics (e.g., `/auth/` → authentication docs)
+- Extract component names from code changes to find related documentation
+- Identify API endpoints from route files to find API documentation
+- Correlate database changes with data architecture documentation
+
+🎯 **PRIORITIZATION MATRIX**:
+- **HIGH**: Customer-facing features, API changes, security updates, breaking changes
+- **MEDIUM**: Internal tools, configuration changes, workflow improvements  
+- **LOW**: Code refactoring, test improvements, minor bug fixes
+
+⚡ **OUTPUT EXCELLENCE**:
+- Provide specific page edit URLs for immediate action
+- Include exact content snippets that need updating
+- Suggest specific language/sections to add or modify
+- Estimate time investment for each task
+- Group related changes for efficiency
+
+🔧 **QUALITY CRITERIA**:
+- Every recommendation must have clear business justification
+- Provide specific quotes from existing docs that need updating
+- Include version/date context for tracking
+- Consider downstream documentation dependencies
+
+Always think like a technical writer who understands both code and user needs."""
 )
-
 @confluence_agent.tool
 async def get_confluence_spaces(ctx: RunContext[AnalysisDependencies]) -> str:
     """Get all available Confluence spaces with their keys and names."""
@@ -291,33 +322,55 @@ class PRConfluenceAnalyzer:
         
         # Create analysis prompt
         analysis_prompt = f"""
-        Analyze this Pull Request to determine what Confluence documentation needs updating:
+🚀 **CONFLUENCE DOCUMENTATION IMPACT ANALYSIS**
 
-        **PR Information:**
-        - Repository: {self.repo_name}
-        - PR #{self.pr_number}: {self.pr_title}
-        - Description: {self.pr_body[:400]}{'...' if len(self.pr_body) > 400 else ''}
+**📊 PR CONTEXT:**
+- Repository: {self.repo_name}
+- PR #{self.pr_number}: {self.pr_title}
+- Description: {self.pr_body[:500]}{'...' if len(self.pr_body) > 500 else ''}
 
-        **Code Changes Analysis:**
-        - Total files changed: {file_analysis['total_files']}
-        - File types: {json.dumps(file_analysis['files_by_type'])}
-        - Significant changes: {json.dumps(file_analysis['significant_changes'])}
-        - Documentation indicators: {json.dumps(file_analysis['documentation_indicators'])}
+**🔍 CODE CHANGE INTELLIGENCE:**
+- Files Modified: {file_analysis['total_files']}
+- Change Distribution: {json.dumps(file_analysis['files_by_type'], indent=2)}
+- Significant Changes: {json.dumps(file_analysis['significant_changes'], indent=2)}
+- Documentation Signals: {json.dumps(file_analysis['documentation_indicators'], indent=2)}
 
-        **Steps to follow:**
-        1. Use get_confluence_spaces to understand available documentation spaces
-        2. Use search_confluence_using_cql to find relevant pages that might need updates
-        3. Use get_confluence_page to examine specific pages in detail
-        4. Based on the code changes, identify what documentation needs updating
+**🎯 SYSTEMATIC ANALYSIS WORKFLOW:**
 
-        **Search Strategy:**
-        - Look for API documentation if API files changed
-        - Find configuration docs if config files changed  
-        - Search for feature docs related to modified components
-        - Check for existing pages that mention the changed files or functionality
+**Phase 1 - Confluence Landscape Discovery**
+1. Execute `get_confluence_spaces` to map all available documentation spaces
+2. Identify which spaces are most likely to contain relevant documentation
 
-        Provide specific, actionable Confluence recommendations.
-        """
+**Phase 2 - Intelligent Documentation Search**
+3. For API-related changes, search: `type = "page" AND (title ~ "API" OR title ~ "endpoint" OR text ~ "API documentation")`
+4. For config changes, search: `type = "page" AND (title ~ "configuration" OR title ~ "setup" OR title ~ "environment")`
+5. For feature changes, extract feature names from PR title/files and search: `type = "page" AND text ~ "[feature_name]"`
+6. For database changes, search: `type = "page" AND (title ~ "database" OR title ~ "schema" OR title ~ "data model")`
+
+**Phase 3 - Deep Content Analysis**
+7. For each relevant page found, use `get_confluence_page` to examine current content
+8. Identify specific sections that need updates based on code changes
+9. Look for version numbers, API examples, configuration samples that may be outdated
+
+**Phase 4 - Strategic Recommendations**
+10. Prioritize updates based on customer impact and change significance
+11. Group related changes for efficient documentation updates
+12. Provide specific edit suggestions with exact content modifications
+
+**🎯 SEARCH QUERY EXAMPLES TO EXECUTE:**
+- `space = "DEV" AND type = "page" AND title ~ "{' OR title ~ '.join([f['filename'].split('/')[0] for f in file_analysis.get('significant_changes', [])[:3]])}"`
+- `type = "page" AND text ~ "API" AND lastModified >= "2024-01-01"`
+- `space in ("PROD", "DEV", "ENG") AND type = "page" AND (title ~ "guide" OR title ~ "documentation")`
+
+**💎 SUCCESS METRICS:**
+- Find 3-7 specific documentation pages that need updates
+- Provide exact content quotes that need modification  
+- Include direct Confluence edit URLs for each recommendation
+- Estimate realistic time investment for each task
+- Justify business impact for each proposed change
+
+Execute this analysis systematically and provide detailed, actionable results.
+"""
         
         try:
             print("🤖 Starting PydanticAI analysis with OpenRouter...")
