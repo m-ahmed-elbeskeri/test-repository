@@ -101,7 +101,7 @@ class ConfluenceAnalysisResult(BaseModel):
 
 # Explicitly configure the OpenAI provider and model
 provider = OpenAIProvider(api_key=os.getenv('OPENAI_API_KEY'))
-model = OpenAIModel('gpt-4o', provider=provider)
+model = OpenAIModel('gpt-4.1', provider=provider)
 
 # The model object is the FIRST POSITIONAL ARGUMENT
 confluence_agent = Agent[AnalysisDependencies, ConfluenceAnalysisResult](
