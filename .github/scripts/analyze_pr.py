@@ -103,8 +103,9 @@ class ConfluenceAnalysisResult(BaseModel):
 provider = OpenAIProvider(api_key=os.getenv('OPENAI_API_KEY'))
 model = OpenAIModel('gpt-4o', provider=provider)
 
+# The model object is the FIRST POSITIONAL ARGUMENT
 confluence_agent = Agent[AnalysisDependencies, ConfluenceAnalysisResult](
-    llm=model, # Pass the explicitly configured model
+    model, 
     deps_type=AnalysisDependencies,
     output_type=ConfluenceAnalysisResult,
     system_prompt="""You are an elite documentation strategist and AI assistant specializing in intelligent Confluence documentation analysis for software development teams.
