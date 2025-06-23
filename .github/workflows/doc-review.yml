@@ -47,7 +47,7 @@ jobs:
             confluence_actions.json
           retention-days: 5
 
-      - name: Comment on PR with hybrid results
+      - name: Comment on PR with comprehensive results
         if: success()
         uses: actions/github-script@v7
         env:
@@ -77,33 +77,71 @@ jobs:
               const results = JSON.parse(fs.readFileSync('confluence_actions.json', 'utf8'));
               const confluenceUrl = process.env.CONFLUENCE_URL;
               
+              // Helper function to split large content into multiple comments if needed
+              const postComment = async (content) => {
+                // GitHub comment limit is ~65,536 characters, use 60,000 to be safe
+                const MAX_COMMENT_LENGTH = 60000;
+                
+                if (content.length <= MAX_COMMENT_LENGTH) {
+                  await github.rest.issues.createComment({
+                    issue_number: context.issue.number,
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    body: content
+                  });
+                } else {
+                  // Split into multiple comments
+                  const parts = [];
+                  let currentPart = '';
+                  const lines = content.split('\n');
+                  
+                  for (const line of lines) {
+                    if ((currentPart + line + '\n').length > MAX_COMMENT_LENGTH) {
+                      if (currentPart) parts.push(currentPart);
+                      currentPart = line + '\n';
+                    } else {
+                      currentPart += line + '\n';
+                    }
+                  }
+                  if (currentPart) parts.push(currentPart);
+                  
+                  // Post each part as a separate comment
+                  for (let i = 0; i < parts.length; i++) {
+                    const header = i === 0 ? '' : `### 📋 Documentation Review (Part ${i + 1}/${parts.length})\n\n`;
+                    await github.rest.issues.createComment({
+                      issue_number: context.issue.number,
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      body: header + parts[i]
+                    });
+                  }
+                }
+              };
+              
               let comment = '## 📋 AI Documentation Review\n\n';
               
               // Executive Summary
               comment += '### 📊 Executive Summary\n\n';
-              comment += `> **Strategy:** ${results.content_strategy || 'Hybrid approach analysis'}\n`;
-              comment += `> **Impact:** ${results.summary || 'Analysis completed'}\n`;
-              comment += `> **Total Actions:** ${results.total_actions || 0}\n`;
-              comment += `> **Estimated Effort:** ${results.estimated_total_effort || 'Unknown'}\n`;
-              comment += `> **Spaces Affected:** ${results.spaces_affected?.join(', ') || 'N/A'}\n`;
+              comment += `**Strategy:** ${results.content_strategy || 'Hybrid approach analysis'}\n\n`;
+              comment += `**Impact:** ${results.summary || 'Analysis completed'}\n\n`;
+              comment += `**Total Actions:** ${results.total_actions || 0}\n\n`;
+              comment += `**Estimated Effort:** ${results.estimated_total_effort || 'Unknown'}\n\n`;
+              comment += `**Spaces Affected:** ${results.spaces_affected?.join(', ') || 'N/A'}\n\n`;
               
               if (results.change_categories && results.change_categories.length > 0) {
-                comment += `> **Change Categories:** ${results.change_categories.join(', ')}\n`;
+                comment += `**Change Categories:** ${results.change_categories.join(', ')}\n\n`;
               }
               
               if (results.user_impact_summary) {
-                comment += `> **User Impact:** ${results.user_impact_summary}\n`;
+                comment += `**User Impact:** ${results.user_impact_summary}\n\n`;
               }
-              
-              comment += '\n';
 
               // Critical Updates Section
               if (results.critical_updates && results.critical_updates.length > 0) {
                 comment += '### 🚨 Critical Updates Required\n\n';
                 results.critical_updates.forEach(update => {
-                  comment += `- ⚠️ ${update}\n`;
+                  comment += `⚠️ ${update}\n\n`;
                 });
-                comment += '\n';
               }
 
               // Documentation Actions
@@ -112,23 +150,31 @@ jobs:
 
                 // Group by priority
                 const priorities = {
-                  Critical: results.confluence_actions.filter(a => a.priority === 'critical'),
-                  High: results.confluence_actions.filter(a => a.priority === 'high'),
-                  Medium: results.confluence_actions.filter(a => a.priority === 'medium'),
-                  Low: results.confluence_actions.filter(a => a.priority === 'low')
+                  critical: results.confluence_actions.filter(a => a.priority === 'critical'),
+                  high: results.confluence_actions.filter(a => a.priority === 'high'),
+                  medium: results.confluence_actions.filter(a => a.priority === 'medium'),
+                  low: results.confluence_actions.filter(a => a.priority === 'low')
                 };
 
                 const priorityEmojis = {
-                  Critical: '🚨',
-                  High: '🔴',
-                  Medium: '🟡', 
-                  Low: '🟢'
+                  critical: '🚨',
+                  high: '🔴',
+                  medium: '🟡', 
+                  low: '🟢'
                 };
 
-                const processActions = (actions, label) => {
+                const priorityLabels = {
+                  critical: 'Critical',
+                  high: 'High',
+                  medium: 'Medium',
+                  low: 'Low'
+                };
+
+                const processActions = (actions, priorityKey) => {
                   if (actions.length === 0) return;
                   
-                  comment += `#### ${priorityEmojis[label]} ${label} Priority (${actions.length} action${actions.length > 1 ? 's' : ''})\n\n`;
+                  const label = priorityLabels[priorityKey];
+                  comment += `#### ${priorityEmojis[priorityKey]} ${label} Priority (${actions.length} action${actions.length > 1 ? 's' : ''})\n\n`;
                   
                   actions.forEach((action, index) => {
                     const pageTitle = action.page_title;
@@ -136,63 +182,68 @@ jobs:
                                      action.action === 'create_page' ? 'Create' : 
                                      action.action === 'review_page' ? 'Review' : 'Modify';
                     
-                    comment += `<details>\n`;
-                    comment += `<summary><strong>${actionVerb}: ${pageTitle}</strong> ${action.estimated_time ? `(~${action.estimated_time})` : ''}</summary>\n\n`;
+                    comment += `**${actionVerb}: ${pageTitle}** ${action.estimated_time ? `(~${action.estimated_time})` : ''}\n\n`;
                     
                     // Basic info
-                    comment += `**Space:** ${action.space_key}\n`;
-                    comment += `**Reason:** ${action.reason}\n`;
+                    comment += `**Space:** ${action.space_key}\n\n`;
+                    comment += `**Reason:** ${action.reason}\n\n`;
                     
                     if (action.change_category) {
-                      comment += `**Change Type:** ${action.change_category}\n`;
+                      comment += `**Change Type:** ${action.change_category}\n\n`;
                     }
                     
                     if (action.affected_audiences && action.affected_audiences.length > 0) {
-                      comment += `**Affects:** ${action.affected_audiences.join(', ')}\n`;
+                      comment += `**Affects:** ${action.affected_audiences.join(', ')}\n\n`;
                     }
                     
                     if (action.breaking_changes) {
-                      comment += `**⚠️ Breaking Changes:** Yes\n`;
+                      comment += `**⚠️ Breaking Changes:** Yes\n\n`;
                     }
                     
                     if (action.migration_required) {
-                      comment += `**📋 Migration Required:** Yes\n`;
+                      comment += `**📋 Migration Required:** Yes\n\n`;
                     }
-                    
-                    comment += '\n';
 
-                    // HYBRID CONTENT APPROACH
+                    // FULL CONTENT APPROACH - NO TRUNCATION
                     if (action.action === 'create_page' && action.complete_content) {
                       // NEW PAGE - Complete Content
-                      comment += `**📄 Complete Page Content** (Ready to paste):\n\n`;
-                      comment += `**Page Structure:**\n`;
+                      comment += `**📄 Complete Page Content (Ready to paste):**\n\n`;
+                      
                       if (action.complete_content.page_structure) {
+                        comment += `**Page Structure:**\n\n`;
                         action.complete_content.page_structure.forEach(section => {
                           comment += `- ${section}\n`;
                         });
+                        comment += '\n';
                       }
-                      comment += '\n';
-                      
-                      comment += `**Confluence Markup:**\n`;
-                      comment += `\`\`\`xml\n${action.complete_content.confluence_markup.substring(0, 1500)}${action.complete_content.confluence_markup.length > 1500 ? '\n... (content truncated)' : ''}\n\`\`\`\n\n`;
                       
                       if (action.complete_content.estimated_read_time) {
                         comment += `**Estimated Read Time:** ${action.complete_content.estimated_read_time}\n\n`;
                       }
                       
+                      comment += `**Confluence Markup:**\n\n`;
+                      comment += `\`\`\`xml\n${action.complete_content.confluence_markup}\n\`\`\`\n\n`;
+                      
+                      if (action.complete_content.markdown_version) {
+                        comment += `<details>\n<summary>📝 <strong>Markdown Version (for reference)</strong></summary>\n\n`;
+                        comment += `\`\`\`markdown\n${action.complete_content.markdown_version}\n\`\`\`\n\n`;
+                        comment += `</details>\n\n`;
+                      }
+                      
                     } else if (action.action === 'update_page' && action.contextual_updates) {
                       // EXISTING PAGE - Contextual Updates
-                      comment += `**🎯 Contextual Updates** (Precise placement):\n\n`;
+                      comment += `**🎯 Contextual Updates (Precise placement):**\n\n`;
                       
                       action.contextual_updates.forEach((update, idx) => {
-                        comment += `**Update ${idx + 1}: ${update.update_type}**\n`;
+                        comment += `**Update ${idx + 1}: ${update.update_type}**\n\n`;
                         comment += `- **Location:** ${update.position_description}\n`;
                         if (update.target_heading) {
                           comment += `- **Target:** ${update.target_heading}\n`;
                         }
                         comment += `- **Action:** ${update.location_type}\n`;
-                        comment += `- **Preview:** ${update.content_preview}...\n`;
-                        comment += `\`\`\`xml\n${update.content_to_add.substring(0, 800)}${update.content_to_add.length > 800 ? '\n... (content truncated)' : ''}\n\`\`\`\n\n`;
+                        comment += `- **Preview:** ${update.content_preview}...\n\n`;
+                        comment += `**Full Content to Add:**\n\n`;
+                        comment += `\`\`\`xml\n${update.content_to_add}\n\`\`\`\n\n`;
                       });
                     }
 
@@ -203,13 +254,13 @@ jobs:
 
                     // Before/after examples
                     if (action.before_after_examples) {
-                      comment += `**Before/After Examples:**\n`;
+                      comment += `**Before/After Examples:**\n\n`;
                       comment += `\`\`\`\n${action.before_after_examples}\n\`\`\`\n\n`;
                     }
 
                     // Validation checklist
                     if (action.validation_checklist && action.validation_checklist.length > 0) {
-                      comment += `**Validation Checklist:**\n`;
+                      comment += `**Validation Checklist:**\n\n`;
                       action.validation_checklist.forEach(item => {
                         comment += `- [ ] ${item}\n`;
                       });
@@ -224,20 +275,20 @@ jobs:
                     // Action links
                     if (action.action === 'update_page' && action.page_id) {
                       comment += `[📝 **Edit Page**](${confluenceUrl}/wiki/spaces/${action.space_key}/pages/${action.page_id}) | `;
-                      comment += `[👁️ **View Page**](${confluenceUrl}/wiki/spaces/${action.space_key}/pages/${action.page_id})\n`;
+                      comment += `[👁️ **View Page**](${confluenceUrl}/wiki/spaces/${action.space_key}/pages/${action.page_id})\n\n`;
                     } else if (action.action === 'create_page') {
-                      comment += `[➕ **Create Page**](${confluenceUrl}/wiki/pages/createpage.action?spaceKey=${action.space_key}&title=${encodeURIComponent(pageTitle)})\n`;
+                      comment += `[➕ **Create Page**](${confluenceUrl}/wiki/pages/createpage.action?spaceKey=${action.space_key}&title=${encodeURIComponent(pageTitle)})\n\n`;
                     }
                     
-                    comment += `</details>\n\n`;
+                    comment += '---\n\n';
                   });
                 };
 
                 // Process each priority level
-                processActions(priorities.Critical, 'Critical');
-                processActions(priorities.High, 'High');
-                processActions(priorities.Medium, 'Medium');
-                processActions(priorities.Low, 'Low');
+                processActions(priorities.critical, 'critical');
+                processActions(priorities.high, 'high');
+                processActions(priorities.medium, 'medium');
+                processActions(priorities.low, 'low');
 
               } else {
                 comment += '### ✅ No Documentation Updates Required\n\n';
@@ -271,12 +322,8 @@ jobs:
               
               comment += '</details>';
 
-              await github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: comment
-              });
+              // Post the comment (will split into multiple comments if too long)
+              await postComment(comment);
 
             } catch (error) {
               const errorComment = `## 📋 AI Documentation Review
