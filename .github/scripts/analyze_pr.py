@@ -164,11 +164,16 @@ class GetPagesInConfluenceSpaceTool(BaseTool):
 
 class PRConfluenceAnalyzer:
     def __init__(self):
-        # Initialize LLM
+        # Initialize LLM with OpenRouter
         self.llm = ChatOpenAI(
-            model="gpt-4",
+            model=os.getenv('OPENROUTER_MODEL', 'anthropic/claude-3.5-sonnet'),  # Default to Claude Sonnet
             temperature=0.1,
-            openai_api_key=os.getenv('OPENAI_API_KEY')
+            openai_api_key=os.getenv('OPENROUTER_API_KEY'),
+            openai_api_base="https://openrouter.ai/api/v1",
+            headers={
+                "HTTP-Referer": "https://github.com",  # Optional, for OpenRouter analytics
+                "X-Title": "GitHub Documentation Bot"  # Optional, for OpenRouter analytics
+            }
         )
         
         # Initialize Confluence toolkit
@@ -334,7 +339,7 @@ class PRConfluenceAnalyzer:
         """
         
         try:
-            print("🤖 Starting LangChain agent analysis...")
+            print("🤖 Starting LangChain agent analysis with OpenRouter...")
             result = self.agent.run(analysis_prompt)
             return result
         except Exception as e:
@@ -345,17 +350,21 @@ class PRConfluenceAnalyzer:
 # ============================================================================
 
 def main():
-    print("🚀 Starting PR Confluence Analysis")
+    print("🚀 Starting PR Confluence Analysis with OpenRouter")
     print("=" * 60)
     
     # Validate environment variables
-    required_vars = ['OPENAI_API_KEY', 'CONFLUENCE_URL', 'CONFLUENCE_USERNAME', 
+    required_vars = ['OPENROUTER_API_KEY', 'CONFLUENCE_URL', 'CONFLUENCE_USERNAME', 
                     'CONFLUENCE_API_TOKEN', 'GITHUB_TOKEN', 'PR_NUMBER']
     
     missing_vars = [var for var in required_vars if not os.getenv(var)]
     if missing_vars:
         print(f"❌ Missing required environment variables: {', '.join(missing_vars)}")
         return
+    
+    # Show model being used
+    model = os.getenv('OPENROUTER_MODEL', 'anthropic/claude-3.5-sonnet')
+    print(f"🤖 Using model: {model}")
     
     # Initialize analyzer
     try:
