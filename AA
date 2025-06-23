@@ -1,35 +1,4 @@
-Excellent idea. The example you provided showcases several modern and robust practices from the pydantic-ai ecosystem. By applying these patterns, we can significantly improve your Confluence analysis script, making it more resilient, observable, and efficient.
 
-Here's a refactored version of your script that incorporates the key improvements from the example.
-
-Summary of Improvements:
-
-Asynchronous Networking with httpx: Replaced the synchronous requests library with httpx.AsyncClient for true non-blocking I/O. This is crucial for performance in an asyncio application.
-
-Observability with logfire: Integrated logfire to automatically instrument the agent and the httpx client. This will give you detailed traces of the LLM calls, tool usage, and API requests, which is invaluable for debugging.
-
-Resilience with ModelRetry: Tools now raise a ModelRetry exception on failure (e.g., if a Confluence page isn't found). This allows the agent to intelligently retry the operation, potentially with corrected parameters, instead of failing immediately. The retries=3 parameter is also added to the agent.
-
-Handling Synchronous Libraries: The atlassian-python-api is synchronous. To use it in an async context without blocking, its methods are now run in a separate thread pool using asyncio.to_thread. This is the correct and modern way to integrate blocking code.
-
-Cleaner Dependencies: The AsyncClient is now part of the AnalysisDependencies dataclass and its lifecycle is managed cleanly in the main function using an async with block.
-
-Enhanced Debugging: Uses devtools.debug() for a much richer and more readable output of the final result object compared to printing a raw dictionary.
-
-Modern Python Practices: Includes from __future__ import annotations for better type hinting.
-
-Prerequisites
-
-Before running, you'll need to install the new dependencies:
-
-Generated bash
-pip install pydantic-ai "openai>=1.12" atlassian-python-api httpx devtools "logfire[pydantic-ai]"
-
-
-You can also create a requirements.txt file with this content.
-
-The Improved Script
-Generated python
 from __future__ import annotations as _annotations
 
 import os
@@ -301,9 +270,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-IGNORE_WHEN_COPYING_START
-content_copy
-download
-Use code with caution.
-Python
-IGNORE_WHEN_COPYING_END
