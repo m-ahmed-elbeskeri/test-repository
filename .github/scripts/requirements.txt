@@ -1,0 +1,6 @@
+pydantic-ai
+openai>=1.12
+atlassian-python-api
+httpx
+devtools
+logfire[pydantic-ai]
