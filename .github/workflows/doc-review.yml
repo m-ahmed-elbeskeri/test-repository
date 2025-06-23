@@ -123,8 +123,9 @@ jobs:
             }
 
             comment += '---\n';
-            // <--- IMPROVEMENT: Updated bot attribution and provided a link to log artifacts
+            
             comment += `*Analysis powered by GPT-4o. [View Workflow Run](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})*`;
+            comment += `Remember: Great documentation prevents support tickets, reduces onboarding time, and enables users to succeed independently. Focus on creating content that truly serves the user's needs and business objectives.\n\n';
 
 
             github.rest.issues.createComment({
