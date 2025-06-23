@@ -1,35 +1,164 @@
 name: Documentation Review
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
 jobs:
-  generate-doc-prompt:
+  confluence-analysis:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          
+
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          
+
       - name: Install dependencies
         run: |
-          pip install requests
+          pip install --upgrade pip
+          pip install pydantic-ai atlassian-python-api requests
 
-      - name: Generate documentation prompt
+      - name: Create scripts directory
+        run: mkdir -p .github/scripts
+
+      - name: Analyze PR with Confluence tools
         env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CONFLUENCE_URL: ${{ secrets.CONFLUENCE_URL }}
+          CONFLUENCE_USERNAME: ${{ secrets.CONFLUENCE_USERNAME }}
+          CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO_NAME: ${{ github.repository }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
-        run: python .github/scripts/generate_prompt.py
+        run: python .github/scripts/analyze_pr.py
+
+      - name: Upload analysis artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: confluence-analysis-results
+          path: |
+            confluence_actions.json
+            confluence_analysis_raw.txt
+          retention-days: 30
+
+      - name: Comment on PR with results
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let comment = '## 📋 Documentation Review Results\n\n';
+
+            try {
+              if (fs.existsSync('confluence_actions.json')) {
+                const results = JSON.parse(fs.readFileSync('confluence_actions.json', 'utf8'));
+
+                comment += `> Summary: ${results.summary || 'Analysis completed'}\n`;
+                comment += `> Actions Required: ${results.total_actions || 0}\n`;
+                comment += `> Estimated Effort: ${results.estimated_effort || 'Unknown'}\n`;
+                comment += `> Spaces Affected: ${results.spaces_affected?.join(', ') || 'N/A'}\n\n`;
+
+                if (results.confluence_actions && results.confluence_actions.length > 0) {
+                  comment += '### Documentation Actions Required\n\n';
+
+                  const priorities = {
+                    High: results.confluence_actions.filter(a => a.priority === 'high'),
+                    Medium: results.confluence_actions.filter(a => a.priority === 'medium'),
+                    Low: results.confluence_actions.filter(a => a.priority === 'low'),
+                  };
+
+                  const processActions = (actions, label) => {
+                    if (actions.length > 0) {
+                      comment += `#### ${label} Priority\n\n`;
+                      actions.forEach(action => {
+                        const pageTitle = action.page_title || action.new_page_title;
+                        const confluenceUrl = process.env.CONFLUENCE_URL || 'https://your-domain.atlassian.net';
+
+                        comment += `**${action.action === 'update_page' ? 'Update' : 'Create'}: ${pageTitle}**\n`;
+                        comment += `- Space: ${action.space_key}\n`;
+                        comment += `- Reason: ${action.reason}\n`;
+                        comment += `- Changes:\n\`\`\`\n${action.specific_changes}\n\`\`\`\n`;
+
+                        if (action.action === 'update_page' && action.page_id) {
+                          comment += `- [Edit Page](${confluenceUrl}/pages/resumedraft.action?draftId=${action.page_id}) | [View Page](${confluenceUrl}/spaces/${action.space_key}/pages/${action.page_id})\n`;
+                        } else if (action.action === 'create_page') {
+                          comment += `- [Create Page](${confluenceUrl}/pages/createpage.action?spaceKey=${action.space_key}&title=${encodeURIComponent(pageTitle)})\n`;
+                        }
+
+                        comment += '\n';
+                      });
+                    }
+                  };
+
+                  processActions(priorities.High, 'High');
+                  processActions(priorities.Medium, 'Medium');
+                  processActions(priorities.Low, 'Low');
+
+                  comment += '### Implementation Checklist\n\n';
+                  results.confluence_actions.forEach(action => {
+                    comment += `- [ ] ${action.action === 'update_page' ? 'Update' : 'Create'}: ${action.page_title || action.new_page_title} (${action.space_key})\n`;
+                  });
+
+                } else {
+                  comment += '✅ No documentation updates required for this PR.\n\n';
+                }
+
+              } else {
+                comment += '⚠️ No structured results found. Check workflow logs for details.\n\n';
+              }
+
+            } catch (error) {
+              comment += `❌ Error reading analysis results: ${error.message}\n\n`;
+            }
+
+            comment += '---\n';
+            comment += `📁 [View Workflow Logs](${context.payload.repository.html_url}/actions/runs/${context.runId})  \n`;
+            comment += `🛠️ [Workflow Config](${context.payload.repository.html_url}/blob/main/.github/workflows/documentation-review.yml)  \n`;
+            comment += `📚 [Documentation Guidelines](https://your-domain.atlassian.net/wiki/spaces/ENG/pages/123456/Documentation+Guidelines)\n\n`;
+            comment += `*Generated by Claude via OpenRouter – Run ID: ${context.runId}*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Handle workflow failures
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = `## ❌ Documentation Analysis Failed
+
+            The automated documentation review encountered an error.
+
+            **Troubleshooting:**
+            - Check the [workflow logs](${context.payload.repository.html_url}/actions/runs/${context.runId})
+            - Verify that all required secrets are configured
+            - Ensure Confluence credentials are valid
+
+            Required Secrets:
+            - OPENAI_API_KEY
+            - CONFLUENCE_URL
+            - CONFLUENCE_USERNAME
+            - CONFLUENCE_API_TOKEN`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
