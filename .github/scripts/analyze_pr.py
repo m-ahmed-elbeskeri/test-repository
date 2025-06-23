@@ -7,17 +7,12 @@ from dataclasses import dataclass
 from typing import Optional, Dict, List, Any
 
 import httpx
-import logfire
 from devtools import debug
 from atlassian import Confluence
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext, ModelRetry
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
-
-# Configure logfire for observability (works even without a token)
-logfire.configure(send_to_logfire='if-token-present')
-logfire.instrument_pydantic_ai()
 
 # ============================================================================
 # ASYNC-COMPATIBLE CONFLUENCE TOOLKIT
@@ -111,17 +106,40 @@ confluence_agent = Agent[AnalysisDependencies, ConfluenceAnalysisResult](
     deps_type=AnalysisDependencies,
     output_type=ConfluenceAnalysisResult,
     retries=3,  # Add retries for resilience
-    system_prompt="""You are an elite documentation strategist... [Your detailed prompt here]"""
+    system_prompt="""You are an elite documentation strategist responsible for analyzing pull requests and identifying necessary Confluence documentation updates. Your goal is to ensure that all code changes are properly reflected in the team's documentation.
+
+Given a pull request with its context and file changes, you must:
+
+1. **Analyze the Impact**: Understand what the code changes mean for existing documentation
+2. **Search Confluence**: Use available tools to find relevant existing documentation
+3. **Identify Actions**: Determine what documentation needs to be updated, created, or reviewed
+4. **Prioritize**: Assign appropriate priority levels based on the impact and urgency
+5. **Provide Specifics**: Give detailed recommendations for what changes need to be made
+
+**Available Tools:**
+- get_confluence_spaces: Get all available Confluence spaces
+- search_confluence_using_cql: Search for existing pages using Confluence Query Language
+- get_confluence_page: Get detailed content of specific pages
+
+**Guidelines:**
+- Focus on user-facing documentation, API docs, and architectural changes
+- Consider both direct impacts (new features) and indirect impacts (changed behaviors)
+- Prioritize high-impact changes that affect end users or developers
+- Be specific about what sections of documentation need updating
+- Consider creating new pages for significant new features
+- Always verify existing documentation before recommending updates
+
+Return a structured analysis with specific, actionable recommendations."""
 )
 
 @confluence_agent.tool
 async def get_confluence_spaces(ctx: RunContext[AnalysisDependencies]) -> str:
     """Get all available Confluence spaces with their keys and names."""
     try:
-        with logfire.span("tool: get_confluence_spaces"):
-            spaces = await ctx.deps.confluence_toolkit.get_confluence_spaces()
-            simplified = [{"key": s.get("key"), "name": s.get("name")} for s in spaces]
-            return json.dumps(simplified, indent=2)
+        print("🔍 Getting Confluence spaces...")
+        spaces = await ctx.deps.confluence_toolkit.get_confluence_spaces()
+        simplified = [{"key": s.get("key"), "name": s.get("name")} for s in spaces]
+        return json.dumps(simplified, indent=2)
     except Exception as e:
         raise ModelRetry(f"Error getting Confluence spaces: {e}")
 
@@ -129,12 +147,12 @@ async def get_confluence_spaces(ctx: RunContext[AnalysisDependencies]) -> str:
 async def search_confluence_using_cql(ctx: RunContext[AnalysisDependencies], cql: str) -> str:
     """Search Confluence using a CQL query string."""
     try:
-        with logfire.span("tool: search_confluence_using_cql", cql=cql):
-            results = await ctx.deps.confluence_toolkit.search_confluence_using_cql(cql)
-            if not results:
-                return "No pages found for this CQL query."
-            simplified = [{"id": r.get("id"), "title": r.get("title"), "space": r.get("space", {}).get("key")} for r in results]
-            return json.dumps(simplified, indent=2)
+        print(f"🔍 Searching Confluence with CQL: {cql}")
+        results = await ctx.deps.confluence_toolkit.search_confluence_using_cql(cql)
+        if not results:
+            return "No pages found for this CQL query."
+        simplified = [{"id": r.get("id"), "title": r.get("title"), "space": r.get("space", {}).get("key")} for r in results]
+        return json.dumps(simplified, indent=2)
     except Exception as e:
         raise ModelRetry(f"Error searching Confluence with CQL '{cql}': {e}")
 
@@ -142,12 +160,16 @@ async def search_confluence_using_cql(ctx: RunContext[AnalysisDependencies], cql
 async def get_confluence_page(ctx: RunContext[AnalysisDependencies], page_id: str) -> str:
     """Get detailed content of a specific Confluence page by its ID."""
     try:
-        with logfire.span("tool: get_confluence_page", page_id=page_id):
-            page = await ctx.deps.confluence_toolkit.get_confluence_page(page_id)
-            if not page or "error" in page:
-                raise ModelRetry(f"Page with ID '{page_id}' not found or error retrieving it.")
-            simplified = {"id": page.get("id"), "title": page.get("title"), "content_preview": page.get("body", {}).get("storage", {}).get("value", "")[:1000]}
-            return json.dumps(simplified, indent=2)
+        print(f"📄 Getting Confluence page: {page_id}")
+        page = await ctx.deps.confluence_toolkit.get_confluence_page(page_id)
+        if not page or "error" in page:
+            raise ModelRetry(f"Page with ID '{page_id}' not found or error retrieving it.")
+        simplified = {
+            "id": page.get("id"), 
+            "title": page.get("title"), 
+            "content_preview": page.get("body", {}).get("storage", {}).get("value", "")[:1000]
+        }
+        return json.dumps(simplified, indent=2)
     except Exception as e:
         raise ModelRetry(f"Error getting Confluence page '{page_id}': {e}")
 
@@ -171,7 +193,10 @@ class PRConfluenceAnalyzer:
     async def get_pr_changes(self) -> List[Dict]:
         """Get PR file changes from GitHub API using httpx."""
         url = f"https://api.github.com/repos/{self.repo_name}/pulls/{self.pr_number}/files"
-        headers = {'Authorization': f'token {os.getenv("GITHUB_TOKEN")}', 'Accept': 'application/vnd.github.v3+json'}
+        headers = {
+            'Authorization': f'token {os.getenv("GITHUB_TOKEN")}', 
+            'Accept': 'application/vnd.github.v3+json'
+        }
         try:
             response = await self.client.get(url, headers=headers)
             response.raise_for_status()
@@ -184,14 +209,20 @@ class PRConfluenceAnalyzer:
             return []
             
     def analyze_file_changes(self, files: List[Dict]) -> Dict:
-        """Analyze the file changes to understand impact (remains synchronous)."""
-        # ... [This function's logic is CPU-bound and doesn't need to be async] ...
-        analysis = {'total_files': len(files), 'files_by_type': {}, 'significant_changes': []}
+        """Analyze the file changes to understand impact."""
+        analysis = {
+            'total_files': len(files), 
+            'files_by_type': {}, 
+            'significant_changes': []
+        }
+        
         for f in files:
             ext = f['filename'].split('.')[-1] if '.' in f['filename'] else 'no-ext'
             analysis['files_by_type'][ext] = analysis['files_by_type'].get(ext, 0) + 1
+            
             if f.get('additions', 0) > 20 or f.get('deletions', 0) > 10:
                 analysis['significant_changes'].append(f['filename'])
+        
         return analysis
     
     async def run_analysis(self) -> ConfluenceAnalysisResult | None:
@@ -226,7 +257,6 @@ class PRConfluenceAnalyzer:
             result = await confluence_agent.run(analysis_prompt, deps=deps)
             return result.data
         except Exception as e:
-            logfire.error("❌ Error during PydanticAI analysis: {e}", e=e)
             print(f"❌ Error during PydanticAI analysis: {e}")
             return None
 
@@ -238,15 +268,22 @@ async def main():
     print("🚀 Starting PR Confluence Analysis with PydanticAI")
     print("=" * 60)
     
-    required_vars = ['OPENAI_API_KEY', 'CONFLUENCE_URL', 'CONFLUENCE_USERNAME', 'CONFLUENCE_API_TOKEN', 'GITHUB_TOKEN', 'PR_NUMBER', 'REPO_NAME']
-    if any(not os.getenv(var) for var in required_vars):
-        missing = [var for var in required_vars if not os.getenv(var)]
+    required_vars = [
+        'OPENAI_API_KEY', 
+        'CONFLUENCE_URL', 
+        'CONFLUENCE_USERNAME', 
+        'CONFLUENCE_API_TOKEN', 
+        'GITHUB_TOKEN', 
+        'PR_NUMBER', 
+        'REPO_NAME'
+    ]
+    
+    missing = [var for var in required_vars if not os.getenv(var)]
+    if missing:
         print(f"❌ Missing required environment variables: {', '.join(missing)}")
         return
 
     async with httpx.AsyncClient() as client:
-        logfire.instrument_httpx(client)
-        
         analyzer = PRConfluenceAnalyzer(client)
         print(f"📋 Analyzing PR #{analyzer.pr_number}: {analyzer.pr_title}")
         
