@@ -24,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install langchain-core langchain-openai langchain-community langchain requests atlassian-python-api
+          pip install pydantic-ai atlassian-python-api requests
 
       - name: Create scripts directory
         run: mkdir -p .github/scripts
@@ -32,7 +32,6 @@ jobs:
       - name: Analyze PR with Confluence tools
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          OPENROUTER_MODEL: ${{ secrets.OPENROUTER_MODEL }}
           CONFLUENCE_URL: ${{ secrets.CONFLUENCE_URL }}
           CONFLUENCE_USERNAME: ${{ secrets.CONFLUENCE_USERNAME }}
           CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
