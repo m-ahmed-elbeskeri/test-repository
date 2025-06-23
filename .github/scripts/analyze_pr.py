@@ -6,6 +6,8 @@ from typing import Optional, Dict, List, Union
 from dataclasses import dataclass
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
 from atlassian import Confluence
 
 # ============================================================================
@@ -97,9 +99,12 @@ class ConfluenceAnalysisResult(BaseModel):
 # PYDANTICAI AGENT WITH TOOLS
 # ============================================================================
 
-# Configure the agent with OpenRouter
+# Explicitly configure the OpenAI provider and model
+provider = OpenAIProvider(api_key=os.getenv('OPENAI_API_KEY'))
+model = OpenAIModel('gpt-4o', provider=provider)
+
 confluence_agent = Agent[AnalysisDependencies, ConfluenceAnalysisResult](
-    'openrouter:anthropic/claude-3.5-sonnet',
+    llm=model, # Pass the explicitly configured model
     deps_type=AnalysisDependencies,
     output_type=ConfluenceAnalysisResult,
     system_prompt="""You are an elite documentation strategist and AI assistant specializing in intelligent Confluence documentation analysis for software development teams.
@@ -373,7 +378,7 @@ Execute this analysis systematically and provide detailed, actionable results.
 """
         
         try:
-            print("🤖 Starting PydanticAI analysis with OpenRouter...")
+            print("🤖 Starting PydanticAI analysis with OpenAI...")
             
             # Run the agent
             result = await confluence_agent.run(analysis_prompt, deps=deps)
@@ -393,7 +398,7 @@ async def main():
     print("=" * 60)
     
     # Validate environment variables
-    required_vars = ['OPENROUTER_API_KEY', 'CONFLUENCE_URL', 'CONFLUENCE_USERNAME', 
+    required_vars = ['OPENAI_API_KEY', 'CONFLUENCE_URL', 'CONFLUENCE_USERNAME', 
                     'CONFLUENCE_API_TOKEN', 'GITHUB_TOKEN', 'PR_NUMBER']
     
     missing_vars = [var for var in required_vars if not os.getenv(var)]
@@ -401,10 +406,7 @@ async def main():
         print(f"❌ Missing required environment variables: {', '.join(missing_vars)}")
         return
     
-    # Set OpenRouter API key for PydanticAI
-    os.environ['OPENAI_API_KEY'] = os.getenv('OPENROUTER_API_KEY')
-    
-    print(f"🤖 Using model: openrouter:anthropic/claude-3.5-sonnet")
+    print(f"🤖 Using model: gpt-4o")
     
     # Initialize analyzer
     try:
