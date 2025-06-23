@@ -1,10 +1,11 @@
 import os
 import json
 import requests
-from typing import Optional, Dict, List
-from langchain_core.tools import tool
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage
+import asyncio
+from typing import Optional, Dict, List, Union
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
 from atlassian import Confluence
 
 # ============================================================================
@@ -60,22 +61,70 @@ class ConfluenceToolkit:
             return [{"error": str(e)}]
 
 # ============================================================================
-# CONFLUENCE TOOLS USING @tool DECORATOR
+# DEPENDENCIES AND OUTPUT MODELS
 # ============================================================================
 
-# Global toolkit instance - will be set in main()
-confluence_toolkit = None
+@dataclass
+class AnalysisDependencies:
+    """Dependencies passed to agent tools and functions"""
+    confluence_toolkit: ConfluenceToolkit
+    pr_number: str
+    repo_name: str
+    pr_title: str
+    pr_body: str
+    file_analysis: Dict
 
-@tool
-def get_confluence_spaces() -> str:
+class ConfluenceAction(BaseModel):
+    """A single Confluence documentation action"""
+    action: str = Field(description="Type of action: update_page, create_page, or review_page")
+    page_id: Optional[str] = Field(description="Confluence page ID if updating existing page")
+    space_key: str = Field(description="Confluence space key")
+    page_title: str = Field(description="Title of the page to update or create")
+    reason: str = Field(description="Why this documentation needs updating")
+    priority: str = Field(description="Priority level: high, medium, or low")
+    specific_changes: str = Field(description="Specific changes or additions needed")
+    existing_content_summary: Optional[str] = Field(description="Brief summary of current page content if applicable")
+
+class ConfluenceAnalysisResult(BaseModel):
+    """Final structured output of the Confluence analysis"""
+    confluence_actions: List[ConfluenceAction] = Field(description="List of documentation actions needed")
+    summary: str = Field(description="Brief summary of documentation impact and rationale")
+    total_actions: int = Field(description="Total number of actions identified")
+    estimated_effort: str = Field(description="Estimated effort: Low, Medium, or High")
+    spaces_affected: List[str] = Field(description="List of Confluence spaces that will be affected")
+
+# ============================================================================
+# PYDANTICAI AGENT WITH TOOLS
+# ============================================================================
+
+# Configure the agent with OpenRouter
+confluence_agent = Agent[AnalysisDependencies, ConfluenceAnalysisResult](
+    # Use OpenRouter with Anthropic Claude
+    'openrouter:anthropic/claude-3.5-sonnet',
+    deps_type=AnalysisDependencies,
+    output_type=ConfluenceAnalysisResult,
+    system_prompt="""You are a documentation expert analyzing Pull Request changes to determine what Confluence documentation needs updating.
+
+Your mission:
+1. Explore Confluence structure to understand available documentation spaces
+2. Find relevant documentation that might need updating based on code changes
+3. Examine specific pages in detail when relevant
+4. Identify specific, actionable documentation updates needed
+
+Always use the available tools to gather information before making recommendations.
+Provide detailed, specific recommendations with clear reasoning."""
+)
+
+@confluence_agent.tool
+async def get_confluence_spaces(ctx: RunContext[AnalysisDependencies]) -> str:
     """Get all available Confluence spaces with their keys and names."""
-    spaces = confluence_toolkit.get_confluence_spaces()
+    spaces = ctx.deps.confluence_toolkit.get_confluence_spaces()
     simplified = [{"key": s.get("key"), "name": s.get("name"), "type": s.get("type")} 
                  for s in spaces if not s.get("error")]
     return json.dumps(simplified, indent=2)
 
-@tool 
-def search_confluence_using_cql(cql: str) -> str:
+@confluence_agent.tool 
+async def search_confluence_using_cql(ctx: RunContext[AnalysisDependencies], cql: str) -> str:
     """Search Confluence using CQL query.
     
     Examples:
@@ -86,7 +135,7 @@ def search_confluence_using_cql(cql: str) -> str:
     Args:
         cql: The CQL query string to search Confluence
     """
-    results = confluence_toolkit.search_confluence_using_cql(cql)
+    results = ctx.deps.confluence_toolkit.search_confluence_using_cql(cql)
     simplified = []
     for r in results:
         if not r.get("error"):
@@ -99,14 +148,14 @@ def search_confluence_using_cql(cql: str) -> str:
             })
     return json.dumps(simplified, indent=2)
 
-@tool
-def get_confluence_page(page_id: str) -> str:
+@confluence_agent.tool
+async def get_confluence_page(ctx: RunContext[AnalysisDependencies], page_id: str) -> str:
     """Get detailed content of a specific Confluence page by ID.
     
     Args:
         page_id: The Confluence page ID to retrieve
     """
-    page = confluence_toolkit.get_confluence_page(page_id)
+    page = ctx.deps.confluence_toolkit.get_confluence_page(page_id)
     if page.get("error"):
         return json.dumps(page)
     
@@ -120,14 +169,14 @@ def get_confluence_page(page_id: str) -> str:
     }
     return json.dumps(simplified, indent=2)
 
-@tool
-def get_pages_in_confluence_space(space_key: str) -> str:
+@confluence_agent.tool
+async def get_pages_in_confluence_space(ctx: RunContext[AnalysisDependencies], space_key: str) -> str:
     """Get all pages in a specific Confluence space by space key.
     
     Args:
         space_key: The Confluence space key (e.g., 'DEV', 'PROD')
     """
-    pages = confluence_toolkit.get_pages_in_confluence_space(space_key)
+    pages = ctx.deps.confluence_toolkit.get_pages_in_confluence_space(space_key)
     if isinstance(pages, list) and pages and pages[0].get("error"):
         return json.dumps(pages[0])
     
@@ -147,37 +196,12 @@ def get_pages_in_confluence_space(space_key: str) -> str:
 
 class PRConfluenceAnalyzer:
     def __init__(self):
-        global confluence_toolkit
-        
-        # Initialize LLM with OpenRouter (fixed headers)
-        self.llm = ChatOpenAI(
-            model=os.getenv('OPENROUTER_MODEL', 'anthropic/claude-3.5-sonnet'),
-            temperature=0.1,
-            openai_api_key=os.getenv('OPENROUTER_API_KEY'),
-            openai_api_base="https://openrouter.ai/api/v1",
-            default_headers={
-                "HTTP-Referer": "https://github.com",
-                "X-Title": "GitHub Documentation Bot"
-            }
-        )
-        
         # Initialize Confluence toolkit
-        confluence_toolkit = ConfluenceToolkit(
+        self.confluence_toolkit = ConfluenceToolkit(
             url=os.getenv('CONFLUENCE_URL'),
             username=os.getenv('CONFLUENCE_USERNAME'),
             api_token=os.getenv('CONFLUENCE_API_TOKEN')
         )
-        
-        # Tools list
-        self.tools = [
-            get_confluence_spaces,
-            search_confluence_using_cql,
-            get_confluence_page,
-            get_pages_in_confluence_space
-        ]
-        
-        # Bind tools to model
-        self.llm_with_tools = self.llm.bind_tools(self.tools)
         
         # PR details
         self.pr_number = os.getenv('PR_NUMBER')
@@ -244,8 +268,8 @@ class PRConfluenceAnalyzer:
         
         return analysis
     
-    def run_confluence_analysis(self):
-        """Run the main Confluence analysis using modern LangChain approach"""
+    async def run_confluence_analysis(self):
+        """Run the main Confluence analysis using PydanticAI"""
         
         # Get PR changes
         files = self.get_pr_changes()
@@ -255,9 +279,19 @@ class PRConfluenceAnalyzer:
         # Analyze files
         file_analysis = self.analyze_file_changes(files)
         
-        # Create comprehensive analysis prompt
+        # Create dependencies object
+        deps = AnalysisDependencies(
+            confluence_toolkit=self.confluence_toolkit,
+            pr_number=self.pr_number,
+            repo_name=self.repo_name,
+            pr_title=self.pr_title,
+            pr_body=self.pr_body,
+            file_analysis=file_analysis
+        )
+        
+        # Create analysis prompt
         analysis_prompt = f"""
-        You are a documentation expert analyzing a Pull Request to determine what Confluence documentation needs updating.
+        Analyze this Pull Request to determine what Confluence documentation needs updating:
 
         **PR Information:**
         - Repository: {self.repo_name}
@@ -266,15 +300,15 @@ class PRConfluenceAnalyzer:
 
         **Code Changes Analysis:**
         - Total files changed: {file_analysis['total_files']}
-        - File types: {json.dumps(file_analysis['files_by_type'], indent=2)}
-        - Significant changes: {json.dumps(file_analysis['significant_changes'], indent=2)}
-        - Documentation indicators: {json.dumps(file_analysis['documentation_indicators'], indent=2)}
+        - File types: {json.dumps(file_analysis['files_by_type'])}
+        - Significant changes: {json.dumps(file_analysis['significant_changes'])}
+        - Documentation indicators: {json.dumps(file_analysis['documentation_indicators'])}
 
-        **Your Mission:**
-        1. **Explore Confluence Structure**: Use get_confluence_spaces to understand what documentation spaces exist
-        2. **Find Relevant Documentation**: Use search_confluence_using_cql to find pages that might need updating based on the code changes
-        3. **Examine Specific Pages**: Use get_confluence_page to look at relevant pages in detail
-        4. **Identify Actions Needed**: Determine what specific updates or new pages are required
+        **Steps to follow:**
+        1. Use get_confluence_spaces to understand available documentation spaces
+        2. Use search_confluence_using_cql to find relevant pages that might need updates
+        3. Use get_confluence_page to examine specific pages in detail
+        4. Based on the code changes, identify what documentation needs updating
 
         **Search Strategy:**
         - Look for API documentation if API files changed
@@ -282,80 +316,27 @@ class PRConfluenceAnalyzer:
         - Search for feature docs related to modified components
         - Check for existing pages that mention the changed files or functionality
 
-        **Final Output:** Provide specific, actionable Confluence recommendations in JSON format:
-        ```json
-        {{
-            "confluence_actions": [
-                {{
-                    "action": "update_page",
-                    "page_id": "123456",
-                    "space_key": "DEV", 
-                    "page_title": "API Reference",
-                    "reason": "New authentication endpoints added",
-                    "priority": "high",
-                    "specific_changes": "Add documentation for new endpoints",
-                    "existing_content_summary": "Brief summary of current page content"
-                }}
-            ],
-            "summary": "Brief summary of documentation impact and rationale",
-            "total_actions": 1,
-            "estimated_effort": "Medium",
-            "spaces_affected": ["DEV"]
-        }}
-        ```
-
-        Start your analysis now by exploring the Confluence spaces and finding relevant documentation!
+        Provide specific, actionable Confluence recommendations.
         """
         
         try:
-            print("🤖 Starting modern LangChain analysis with OpenRouter...")
+            print("🤖 Starting PydanticAI analysis with OpenRouter...")
             
-            # Use the modern invoke approach
-            messages = [HumanMessage(content=analysis_prompt)]
-            response = self.llm_with_tools.invoke(messages)
+            # Run the agent
+            result = await confluence_agent.run(analysis_prompt, deps=deps)
             
-            # Handle tool calls if any
-            if hasattr(response, 'tool_calls') and response.tool_calls:
-                print(f"🔧 Model requested {len(response.tool_calls)} tool calls")
-                
-                # Execute tool calls
-                for tool_call in response.tool_calls:
-                    tool_name = tool_call['name']
-                    tool_args = tool_call['args']
-                    
-                    print(f"🛠️ Executing {tool_name} with args: {tool_args}")
-                    
-                    # Find and execute the tool
-                    for tool in self.tools:
-                        if tool.name == tool_name:
-                            try:
-                                if tool_args:
-                                    result = tool.invoke(tool_args)
-                                else:
-                                    result = tool.invoke({})
-                                print(f"✅ Tool {tool_name} executed successfully")
-                                break
-                            except Exception as e:
-                                print(f"❌ Tool {tool_name} failed: {e}")
-                
-                # Get final response after tool execution
-                final_messages = messages + [response]
-                final_response = self.llm.invoke(final_messages)
-                return final_response.content
-            else:
-                # No tool calls, return direct response
-                return response.content
+            return result.data
                 
         except Exception as e:
-            print(f"❌ Error during analysis: {e}")
-            return f"❌ Error during LangChain analysis: {str(e)}"
+            print(f"❌ Error during PydanticAI analysis: {e}")
+            return None
 
 # ============================================================================
 # MAIN EXECUTION
 # ============================================================================
 
-def main():
-    print("🚀 Starting PR Confluence Analysis with OpenRouter")
+async def main():
+    print("🚀 Starting PR Confluence Analysis with PydanticAI")
     print("=" * 60)
     
     # Validate environment variables
@@ -367,9 +348,10 @@ def main():
         print(f"❌ Missing required environment variables: {', '.join(missing_vars)}")
         return
     
-    # Show model being used
-    model = os.getenv('OPENROUTER_MODEL', 'anthropic/claude-3.5-sonnet')
-    print(f"🤖 Using model: {model}")
+    # Set OpenRouter API key for PydanticAI
+    os.environ['OPENAI_API_KEY'] = os.getenv('OPENROUTER_API_KEY')
+    
+    print(f"🤖 Using model: openrouter:anthropic/claude-3.5-sonnet")
     
     # Initialize analyzer
     try:
@@ -383,52 +365,35 @@ def main():
     
     # Run the analysis
     print("\n🔍 Running Confluence analysis...")
-    result = analyzer.run_confluence_analysis()
+    result = await analyzer.run_confluence_analysis()
     
     print("\n" + "="*60)
     print("📊 CONFLUENCE ANALYSIS RESULTS")
     print("="*60)
-    print(result)
     
-    # Save raw results
-    with open('confluence_analysis_raw.txt', 'w') as f:
-        f.write(result)
-    
-    # Try to extract and save JSON
-    try:
-        # Look for JSON in the result
-        start_idx = result.find('{')
-        end_idx = result.rfind('}') + 1
+    if result:
+        # Save structured results
+        result_dict = result.model_dump()
+        with open('confluence_actions.json', 'w') as f:
+            json.dump(result_dict, f, indent=2)
         
-        if start_idx >= 0 and end_idx > start_idx:
-            json_str = result[start_idx:end_idx]
-            json_data = json.loads(json_str)
-            
-            # Save structured JSON
-            with open('confluence_actions.json', 'w') as f:
-                json.dump(json_data, f, indent=2)
-            
-            print("\n✅ Structured results saved to:")
-            print("   📄 confluence_actions.json - Structured data")
-            print("   📄 confluence_analysis_raw.txt - Full agent output")
-            
-            # Print summary
-            if 'confluence_actions' in json_data:
-                actions = json_data['confluence_actions']
-                print(f"\n📈 Summary: {len(actions)} documentation actions identified")
-                for i, action in enumerate(actions, 1):
-                    print(f"   {i}. {action.get('action', 'unknown').title()}: {action.get('page_title', action.get('new_page_title', 'Unknown'))}")
-        else:
-            print("\n⚠️ Could not extract structured JSON from results")
-            print("📄 Raw analysis saved to confluence_analysis_raw.txt")
-            
-    except json.JSONDecodeError as e:
-        print(f"\n⚠️ JSON parsing error: {e}")
-        print("📄 Raw analysis saved to confluence_analysis_raw.txt")
-    except Exception as e:
-        print(f"\n⚠️ Error processing results: {e}")
+        print(f"✅ Analysis complete! Found {result.total_actions} documentation actions:")
+        print(f"📈 Summary: {result.summary}")
+        print(f"🔧 Estimated effort: {result.estimated_effort}")
+        print(f"📁 Spaces affected: {', '.join(result.spaces_affected)}")
+        
+        print(f"\n📋 Actions needed:")
+        for i, action in enumerate(result.confluence_actions, 1):
+            print(f"   {i}. {action.action.title()}: {action.page_title}")
+            print(f"      Space: {action.space_key} | Priority: {action.priority}")
+            print(f"      Reason: {action.reason}")
+            print(f"      Changes: {action.specific_changes}\n")
+        
+        print("✅ Structured results saved to confluence_actions.json")
+    else:
+        print("❌ Analysis failed")
     
     print("\n🎉 Analysis complete!")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
