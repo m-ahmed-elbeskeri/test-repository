@@ -2,13 +2,13 @@ import os
 import json
 import requests
 from typing import Optional, Dict, List
-from langchain.tools import BaseTool
-from langchain.chat_models import ChatOpenAI
+from langchain_core.tools import tool
+from langchain_core.chat_models import ChatOpenAI
 from langchain.agents import initialize_agent, AgentType
 from atlassian import Confluence
 
 # ============================================================================
-# CONFLUENCE TOOLKIT & TOOLS
+# CONFLUENCE TOOLKIT
 # ============================================================================
 
 class ConfluenceToolkit:
@@ -58,105 +58,88 @@ class ConfluenceToolkit:
             return pages
         except Exception as e:
             return [{"error": str(e)}]
-    
-    def get_confluence_page_ancestors(self, page_id: str) -> List[Dict]:
-        """Get page ancestors/parent pages"""
-        try:
-            page = self.confluence.get_page_by_id(page_id, expand='ancestors')
-            return page.get('ancestors', [])
-        except Exception as e:
-            return [{"error": str(e)}]
 
-class GetConfluenceSpacesTool(BaseTool):
-    name = "get_confluence_spaces"
-    description = "Get all available Confluence spaces with their keys and names"
-    
-    def __init__(self, toolkit: ConfluenceToolkit):
-        super().__init__()
-        self.toolkit = toolkit
-    
-    def _run(self, query: str = "") -> str:
-        spaces = self.toolkit.get_confluence_spaces()
-        # Simplify output for better LLM processing
-        simplified = [{"key": s.get("key"), "name": s.get("name"), "type": s.get("type")} 
-                     for s in spaces if not s.get("error")]
-        return json.dumps(simplified, indent=2)
+# ============================================================================
+# CONFLUENCE TOOLS USING @tool DECORATOR
+# ============================================================================
 
-class SearchConfluenceUsingCqlTool(BaseTool):
-    name = "search_confluence_using_cql"
-    description = """Search Confluence using CQL query. 
+# Global toolkit instance - will be set in main()
+confluence_toolkit = None
+
+@tool
+def get_confluence_spaces() -> str:
+    """Get all available Confluence spaces with their keys and names."""
+    spaces = confluence_toolkit.get_confluence_spaces()
+    simplified = [{"key": s.get("key"), "name": s.get("name"), "type": s.get("type")} 
+                 for s in spaces if not s.get("error")]
+    return json.dumps(simplified, indent=2)
+
+@tool 
+def search_confluence_using_cql(cql: str) -> str:
+    """Search Confluence using CQL query.
+    
     Examples:
     - Find pages by title: 'title ~ "API" AND space = "DEV"'
     - Find pages with content: 'text ~ "authentication" AND space = "DEV"'
     - Find recent pages: 'created >= "2024-01-01" AND space = "DEV"'
+    
+    Args:
+        cql: The CQL query string to search Confluence
     """
-    
-    def __init__(self, toolkit: ConfluenceToolkit):
-        super().__init__()
-        self.toolkit = toolkit
-    
-    def _run(self, cql: str) -> str:
-        results = self.toolkit.search_confluence_using_cql(cql)
-        # Simplify output for better LLM processing
-        simplified = []
-        for r in results:
-            if not r.get("error"):
-                simplified.append({
-                    "id": r.get("id"),
-                    "title": r.get("title"),
-                    "space": r.get("space", {}).get("key"),
-                    "url": r.get("_links", {}).get("webui"),
-                    "excerpt": r.get("excerpt", "")[:200]
-                })
-        return json.dumps(simplified, indent=2)
-
-class GetConfluencePageTool(BaseTool):
-    name = "get_confluence_page"
-    description = "Get detailed content of a specific Confluence page by ID"
-    
-    def __init__(self, toolkit: ConfluenceToolkit):
-        super().__init__()
-        self.toolkit = toolkit
-    
-    def _run(self, page_id: str) -> str:
-        page = self.toolkit.get_confluence_page(page_id)
-        if page.get("error"):
-            return json.dumps(page)
-        
-        # Simplify output - extract key info
-        simplified = {
-            "id": page.get("id"),
-            "title": page.get("title"),
-            "space": page.get("space", {}).get("key"),
-            "version": page.get("version", {}).get("number"),
-            "content_preview": page.get("body", {}).get("storage", {}).get("value", "")[:500],
-            "url": page.get("_links", {}).get("webui")
-        }
-        return json.dumps(simplified, indent=2)
-
-class GetPagesInConfluenceSpaceTool(BaseTool):
-    name = "get_pages_in_confluence_space"
-    description = "Get all pages in a specific Confluence space by space key"
-    
-    def __init__(self, toolkit: ConfluenceToolkit):
-        super().__init__()
-        self.toolkit = toolkit
-    
-    def _run(self, space_key: str) -> str:
-        pages = self.toolkit.get_pages_in_confluence_space(space_key)
-        if isinstance(pages, list) and pages and pages[0].get("error"):
-            return json.dumps(pages[0])
-        
-        # Simplify output
-        simplified = []
-        for p in pages[:20]:  # Limit to first 20 pages
+    results = confluence_toolkit.search_confluence_using_cql(cql)
+    simplified = []
+    for r in results:
+        if not r.get("error"):
             simplified.append({
-                "id": p.get("id"),
-                "title": p.get("title"),
-                "status": p.get("status"),
-                "url": p.get("_links", {}).get("webui")
+                "id": r.get("id"),
+                "title": r.get("title"),
+                "space": r.get("space", {}).get("key"),
+                "url": r.get("_links", {}).get("webui"),
+                "excerpt": r.get("excerpt", "")[:200]
             })
-        return json.dumps(simplified, indent=2)
+    return json.dumps(simplified, indent=2)
+
+@tool
+def get_confluence_page(page_id: str) -> str:
+    """Get detailed content of a specific Confluence page by ID.
+    
+    Args:
+        page_id: The Confluence page ID to retrieve
+    """
+    page = confluence_toolkit.get_confluence_page(page_id)
+    if page.get("error"):
+        return json.dumps(page)
+    
+    simplified = {
+        "id": page.get("id"),
+        "title": page.get("title"),
+        "space": page.get("space", {}).get("key"),
+        "version": page.get("version", {}).get("number"),
+        "content_preview": page.get("body", {}).get("storage", {}).get("value", "")[:500],
+        "url": page.get("_links", {}).get("webui")
+    }
+    return json.dumps(simplified, indent=2)
+
+@tool
+def get_pages_in_confluence_space(space_key: str) -> str:
+    """Get all pages in a specific Confluence space by space key.
+    
+    Args:
+        space_key: The Confluence space key (e.g., 'DEV', 'PROD')
+    """
+    pages = confluence_toolkit.get_pages_in_confluence_space(space_key)
+    if isinstance(pages, list) and pages and pages[0].get("error"):
+        return json.dumps(pages[0])
+    
+    simplified = []
+    for p in pages[:20]:  # Limit to first 20 pages
+        simplified.append({
+            "id": p.get("id"),
+            "title": p.get("title"),
+            "status": p.get("status"),
+            "url": p.get("_links", {}).get("webui")
+        })
+    return json.dumps(simplified, indent=2)
 
 # ============================================================================
 # MAIN ANALYZER CLASS
@@ -164,31 +147,35 @@ class GetPagesInConfluenceSpaceTool(BaseTool):
 
 class PRConfluenceAnalyzer:
     def __init__(self):
+        global confluence_toolkit
+        
         # Initialize LLM with OpenRouter
         self.llm = ChatOpenAI(
-            model=os.getenv('OPENROUTER_MODEL', 'anthropic/claude-3.5-sonnet'),  # Default to Claude Sonnet
+            model=os.getenv('OPENROUTER_MODEL', 'anthropic/claude-3.5-sonnet'),
             temperature=0.1,
             openai_api_key=os.getenv('OPENROUTER_API_KEY'),
             openai_api_base="https://openrouter.ai/api/v1",
-            headers={
-                "HTTP-Referer": "https://github.com",  # Optional, for OpenRouter analytics
-                "X-Title": "GitHub Documentation Bot"  # Optional, for OpenRouter analytics
+            model_kwargs={
+                "headers": {
+                    "HTTP-Referer": "https://github.com",
+                    "X-Title": "GitHub Documentation Bot"
+                }
             }
         )
         
         # Initialize Confluence toolkit
-        self.confluence_toolkit = ConfluenceToolkit(
+        confluence_toolkit = ConfluenceToolkit(
             url=os.getenv('CONFLUENCE_URL'),
             username=os.getenv('CONFLUENCE_USERNAME'),
             api_token=os.getenv('CONFLUENCE_API_TOKEN')
         )
         
-        # Initialize tools
+        # Tools list - these are now properly decorated functions
         self.tools = [
-            GetConfluenceSpacesTool(self.confluence_toolkit),
-            SearchConfluenceUsingCqlTool(self.confluence_toolkit),
-            GetConfluencePageTool(self.confluence_toolkit),
-            GetPagesInConfluenceSpaceTool(self.confluence_toolkit)
+            get_confluence_spaces,
+            search_confluence_using_cql,
+            get_confluence_page,
+            get_pages_in_confluence_space
         ]
         
         # Initialize agent
