@@ -151,7 +151,7 @@ jobs:
             - Ensure Confluence credentials are valid
 
             Required Secrets:
-            - OPENROUTER_API_KEY
+            - OPENAI_API_KEY
             - CONFLUENCE_URL
             - CONFLUENCE_USERNAME
             - CONFLUENCE_API_TOKEN`;
